@@ -50,11 +50,17 @@ class DetailCardTests(unittest.TestCase):
     def test_day_heading_uses_the_panels_locale_date_format(self):
         self.assertIn('Qt.formatDate(d, "ddd MMM d")', PANEL)
 
-    def test_components_exist_and_leave_slots(self):
+    def test_components_exist_and_leave_the_tide_slot(self):
         day = (PLUGIN / "DayDetail.qml").read_text(encoding="utf-8")
-        self.assertIn("SLOT: moon", day)
         self.assertIn("SLOT: tides", day)
         self.assertTrue((PLUGIN / "HourDetail.qml").exists())
+
+    def test_moon_is_drawn_in_the_card_and_the_strip(self):
+        day = (PLUGIN / "DayDetail.qml").read_text(encoding="utf-8")
+        self.assertIn("root.card.moon", day)
+        self.assertIn('import "Moon.js" as Moon', PANEL)
+        self.assertIn("function moonGlyph(date)", PANEL)
+        self.assertIn("root.moonGlyph(modelData.date)", PANEL)
 
 
 if __name__ == "__main__":

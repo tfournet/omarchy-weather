@@ -109,7 +109,29 @@ Column {
     }
   }
 
-  // SLOT: moon (feature 2) — phase, illumination, moonrise and moonset.
+  // Moon: only when the forecast says where it is.
+  Row {
+    width: parent.width
+    spacing: Style.space(8)
+    visible: !!root.card && !!root.card.moon
+
+    Text {
+      textFormat: Text.PlainText
+      anchors.verticalCenter: parent.verticalCenter
+      text: root.card && root.card.moon ? root.card.moon.glyph : ""
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.display
+    }
+
+    DetailRows {
+      width: parent.width - parent.spacing - Style.space(28)
+      entries: root.card && root.card.moon ? root.card.moon.rows : []
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+    }
+  }
+
   // SLOT: tides (feature 3) — that day's highs and lows and the station.
-  // Both stay empty on this branch.
+  // Stays empty on this branch.
 }

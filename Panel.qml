@@ -6,6 +6,7 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 import "Detail.js" as Detail
+import "Moon.js" as Moon
 import "RadarModel.js" as RadarModel
 
 Panel {
@@ -342,6 +343,13 @@ Panel {
 
   function toggleDetail(kind, reportIndex) {
     detailSelection = Detail.nextSelection(detailSelection, kind, reportIndex)
+  }
+
+  // Phase glyph for a date at the forecast's own place; empty when the report
+  // does not say where it is.
+  function moonGlyph(date) {
+    var day = Moon.reportDay(dailyForecastReport, date, use12Hour)
+    return day ? day.glyph : ""
   }
 
   function closeDetail() {
@@ -2771,7 +2779,7 @@ KeyboardPanel {
                   Layout.fillWidth: true
                   Layout.minimumWidth: 0
                   clip: true
-                  height: root.metricCellHeight + Style.space(48)
+                  height: root.metricCellHeight + Style.space(64)
                   radius: Math.min(4, Style.cornerRadius)
                   color: modelData.isToday ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.1) : Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.05)
 
@@ -2796,6 +2804,17 @@ KeyboardPanel {
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.caption
                       font.bold: modelData.isToday
+                    }
+
+                    Text {
+                      textFormat: Text.PlainText
+                      width: parent.width
+                      horizontalAlignment: Text.AlignHCenter
+                      visible: text !== ""
+                      text: root.moonGlyph(modelData.date)
+                      color: root.dimText
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
                     }
 
                     Text {
