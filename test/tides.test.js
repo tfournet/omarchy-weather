@@ -805,3 +805,49 @@ test("the layout refuses a missing wave or an unusable size", () => {
     assert.equal(Tides.waveLayout(wave, bad), null, JSON.stringify(bad))
   }
 })
+
+// ---- when to fetch: whenever the open forecast view has a station to show ------
+
+const ready = () => ({ opened: true, view: "forecast", key: "noaa:9414290", cacheLoaded: true, running: false,
+  retryAt: 0, cache: Tides.parseCache(""), now: NOW })
+
+test("the panel opening on the forecast view with a station and no cached tides fetches", () => {
+  assert.equal(Tides.wantsFetch(ready()), true)
+})
+
+test("it fetches without any day card being open", () => {
+  // There is no day card in the state at all; opening the forecast is enough.
+  assert.equal("detail" in ready(), false)
+  assert.equal(Tides.wantsFetch(ready()), true)
+})
+
+test("no fetch while the panel is closed or showing settings", () => {
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { opened: false })), false)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { view: "settings" })), false)
+})
+
+test("no fetch when tides are inactive: no station means an empty key", () => {
+  for (const key of ["", null, undefined]) assert.equal(Tides.wantsFetch(Object.assign(ready(), { key })), false)
+})
+
+test("no fetch while the cache is fresh, one fetch once it is a day old", () => {
+  const cache = Tides.withEntry(Tides.parseCache(""), "noaa:9414290", [{ time: 1, type: "high", height: 1 }], NOW - 3 * HOUR)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { cache })), false)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { cache, now: NOW + 20 * HOUR })), false)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { cache, now: NOW + 21 * HOUR })), true)
+  const other = Tides.withEntry(Tides.parseCache(""), "dfo:123", [], NOW)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { cache: other })), true)
+})
+
+test("no fetch before the cache file has been read, while one is running, or during back-off", () => {
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { cacheLoaded: false })), false)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { running: true })), false)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { retryAt: NOW + 1 })), false)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { retryAt: NOW })), true)
+})
+
+test("a malformed state never fetches", () => {
+  for (const bad of [null, undefined, {}, [], 5, "x"]) assert.equal(Tides.wantsFetch(bad), false)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { now: NaN })), false)
+  assert.equal(Tides.wantsFetch(Object.assign(ready(), { cache: null })), true)
+})

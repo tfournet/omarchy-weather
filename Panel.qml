@@ -358,8 +358,8 @@ Panel {
       : null)
 
   // ---- Tides. The nearest station comes from the index shipped with the
-  //      plugin; predictions are fetched only while a day card is open, at most
-  //      once a day per station, and kept under ~/.local/state (the shell
+  //      plugin; predictions are fetched while the panel is open on the
+  //      forecast, at most once a day per station, and kept under ~/.local/state (the shell
   //      rebuilds every plugin service when a file inside the plugin changes).
   // The one `tides` setting: auto (a station within 100 km), on (the nearest
   // station at any distance) or off. See Tides.stationFor.
@@ -388,12 +388,17 @@ Panel {
     : null
 
   onTideKeyChanged: ensureTides()
-  onDetailSelectionChanged: ensureTides()
+  onOpenedChanged: ensureTides()
+  onMainViewChanged: ensureTides()
 
+  // Fetch when the panel is open on the forecast view (the hourly strip draws
+  // the wave from these events), for the station the `tides` setting picks, at
+  // most once a day. No station (off, or auto and out of range) means no key and
+  // no request. Tides.wantsFetch holds the whole decision.
   function ensureTides() {
-    if (detailSelection.kind !== "day" || !tideChoice || !tideCacheLoaded) return
-    if (tideProc.running || Date.now() < tideRetryAt) return
-    if (!Tides.needsFetch(tideCache, tideKey, Date.now())) return
+    if (!tideChoice) return
+    if (!Tides.wantsFetch({ opened: root.opened, view: root.mainView, key: tideKey, cacheLoaded: tideCacheLoaded,
+        running: tideProc.running, retryAt: tideRetryAt, cache: tideCache, now: Date.now() })) return
     var win = Tides.windowFor(zonedReport)
     if (!win) return
     var argv = Tides.PROVIDERS[tideChoice.station.provider].request(tideChoice.station.id, win.fromMs, win.toMs)

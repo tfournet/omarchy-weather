@@ -94,7 +94,7 @@ and distance so you can judge it. Tide
 predictions come from NOAA CO-OPS (US coasts and territories) or the Canadian
 Hydrographic Service, using a station index shipped in the plugin
 (`tide-stations.json`, regenerate with `scripts/build-tide-stations.py`). They
-are fetched only while a day card is open, at most once a day per station, and
+are fetched when the panel opens on the forecast (the hourly strip draws a tide wave from them), at most once a day per station, and
 cached in `~/.local/state/omarchy/detailed-weather-tides.json`. One setting,
 `tides`, controls them: `auto` (the default) shows tides when the nearest
 station is within 100 km of the forecast location, `on` always uses the nearest
@@ -222,8 +222,8 @@ The built-in weather widget comes back. `weather.json` is left alone.
 | Source | Used for |
 |--------|----------|
 | Open-Meteo | Current, hourly, daily, air quality, city search |
-| tidesandcurrents.noaa.gov (NOAA CO-OPS) | US only, day card open only: high/low tide predictions |
-| api-iwls.dfo-mpo.gc.ca (Canadian Hydrographic Service) | Canada only, day card open only: high/low tide predictions |
+| tidesandcurrents.noaa.gov (NOAA CO-OPS) | US only, when tides are active: high/low tide predictions |
+| api-iwls.dfo-mpo.gc.ca (Canadian Hydrographic Service) | Canada only, when tides are active: high/low tide predictions |
 | api.weather.gov (NWS) | US only, storm alerts only: watches and warnings in force, and the local office's probability of precipitation |
 | wttr.in | IP auto-detect when no home coordinates are stored |
 | RainViewer / NOAA / Windy / WU | Opened in the browser by Open radar (user's saved site) |

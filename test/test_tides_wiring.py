@@ -80,17 +80,27 @@ class TideWiringTests(unittest.TestCase):
         # No station means no tide UI: the card gets no tide info.
         self.assertIn("readonly property var tideInfo: tideChoice", PANEL)
 
-    def test_fetch_only_for_an_open_day_card(self):
+    def test_fetch_when_the_forecast_view_is_open_not_only_for_a_day_card(self):
         ensure = block(PANEL, "function ensureTides()", "\n  }\n")
-        self.assertIn('detailSelection.kind !== "day"', ensure)
+        self.assertIn("Tides.wantsFetch(", ensure)
+        for field in ("opened: root.opened", 'view: root.mainView', "key: tideKey", "cacheLoaded: tideCacheLoaded",
+                      "running: tideProc.running", "retryAt: tideRetryAt", "cache: tideCache", "now: Date.now()"):
+            self.assertIn(field, ensure)
+        self.assertNotIn("detailSelection", ensure)
         self.assertEqual(PANEL.count("tideProc.running = true"), 1)
-        self.assertIn("onDetailSelectionChanged: ensureTides()", PANEL)
+
+    def test_ensure_runs_whenever_one_of_its_inputs_changes(self):
+        for trigger in ("onOpenedChanged: ensureTides()", "onMainViewChanged: ensureTides()", "onTideKeyChanged: ensureTides()"):
+            self.assertIn(trigger, PANEL)
+        # Once the cache file has been read, and when a response ends.
+        self.assertGreaterEqual(block(PANEL, "id: tideCacheFile", "\n  Process {").count("root.ensureTides()"), 2)
+        self.assertIn("ensureTides()", block(PANEL, "function finishTideFetch(raw)", "\n  }\n"))
 
     def test_request_goes_through_the_adapter_and_records_what_it_was_for(self):
         ensure = block(PANEL, "function ensureTides()", "\n  }\n")
         self.assertIn("Tides.PROVIDERS[", ensure)
         self.assertIn(".request(", ensure)
-        self.assertIn("Tides.needsFetch(", ensure)
+        self.assertIn("Tides.wantsFetch(", ensure)
         self.assertIn("tideRequest = { key: tideKey", ensure)
         self.assertNotIn("curl", PANEL.split("function ensureTides()")[1].split("\n  }\n")[0])
 

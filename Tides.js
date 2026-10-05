@@ -338,6 +338,19 @@ function withEntry(cache, key, events, nowMs) {
   return next
 }
 
+// Whether to start a tide request now: the panel is open on the forecast view
+// (the hourly strip shows the wave, so no day card is needed), there is a
+// station to show (an empty key means tides are off or out of range, and then
+// nothing is requested), the cache file has been read, no request is running or
+// backing off, and the station's entry is missing or a day old.
+function wantsFetch(state) {
+  if (!isObject(state) || state.opened !== true || state.view !== "forecast") return false
+  if (typeof state.key !== "string" || state.key === "") return false
+  if (state.cacheLoaded !== true || state.running === true) return false
+  if (!validTime(state.now) || !validTime(state.retryAt) || state.now < state.retryAt) return false
+  return needsFetch(state.cache, state.key, state.now)
+}
+
 // A response answers the question that was asked, not whichever station is
 // wanted by the time it lands.
 function isCurrent(request, wantedKey) {
