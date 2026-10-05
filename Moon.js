@@ -225,3 +225,79 @@ function reportDay(report, dateString, twelveHour) {
   if (!report || typeof report !== "object") return null
   return dayInfo(dateString, report.latitude, report.longitude, Zone.of(report), twelveHour)
 }
+
+// ---- the ten-day moon curve --------------------------------------------------
+
+// The fraction lit (0 new, 1 full) for each date, from the same per-date
+// calculation (and cache) as the day card. Null where the report cannot say.
+function illuminationSeries(report, dates) {
+  if (!Array.isArray(dates)) return []
+  var out = []
+  var ok = report !== null && typeof report === "object"
+  for (var i = 0; i < dates.length; i++) {
+    var core = ok ? dayCore(dates[i], report.latitude, report.longitude, Zone.of(report)) : null
+    out.push(core ? core.fraction : null)
+  }
+  return out
+}
+
+// One point per day at the centre of its cell, for equal cells with `spacing`
+// between them across `width`. 1 is `pad` from the top, 0 is `pad` from the
+// bottom. A value that is not a number from 0 to 1 gives null (a gap).
+function curvePoints(values, width, height, spacing, pad) {
+  var n = values.length
+  var cell = (width - spacing * (n - 1)) / n
+  var usable = n > 0 && width > 0 && height > 0 && cell > 0
+  var out = []
+  for (var i = 0; i < n; i++) {
+    var v = values[i]
+    if (!usable || typeof v !== "number" || !isFinite(v) || v < 0 || v > 1) {
+      out.push(null)
+    } else {
+      out.push({ x: i * (cell + spacing) + cell / 2, y: pad + (1 - v) * (height - 2 * pad) })
+    }
+  }
+  return out
+}
+
+// Bezier segments { p0, c1, c2, p1 } joining the points of each unbroken run
+// smoothly. Tangents are limited (monotone cubic) so the line never rises or
+// falls past the two points it joins; a gap (null) cuts the line.
+function curveSegments(points) {
+  var out = []
+  var run = []
+  for (var i = 0; i <= points.length; i++) {
+    if (i < points.length && points[i] !== null) {
+      run.push(points[i])
+      continue
+    }
+    if (run.length >= 2) appendRun(out, run)
+    run = []
+  }
+  return out
+}
+
+function appendRun(out, run) {
+  var n = run.length
+  var d = []
+  for (var i = 0; i < n - 1; i++) d.push((run[i + 1].y - run[i].y) / (run[i + 1].x - run[i].x))
+  var m = [d[0]]
+  for (var j = 1; j < n - 1; j++) {
+    if (d[j - 1] * d[j] <= 0) {
+      m.push(0)
+    } else {
+      var mean = (d[j - 1] + d[j]) / 2
+      var limit = 3 * Math.min(Math.abs(d[j - 1]), Math.abs(d[j]))
+      m.push(Math.abs(mean) > limit ? (mean < 0 ? -limit : limit) : mean)
+    }
+  }
+  m.push(d[n - 2])
+  for (var k = 0; k < n - 1; k++) {
+    var dx = (run[k + 1].x - run[k].x) / 3
+    out.push({
+      p0: run[k], p1: run[k + 1],
+      c1: { x: run[k].x + dx, y: run[k].y + m[k] * dx },
+      c2: { x: run[k + 1].x - dx, y: run[k + 1].y - m[k + 1] * dx }
+    })
+  }
+}

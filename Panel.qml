@@ -362,6 +362,10 @@ Panel {
 
   // Phase glyph for a date at the forecast's own place; empty when the report
   // does not say where it is.
+  // Each forecast day's illumination, for the strip's curve; recomputed only
+  // when the forecast or its zone changes.
+  readonly property var moonSeries: Moon.illuminationSeries(zonedReport, daily.map(function(d) { return d.date }))
+
   function moonGlyph(date) {
     var day = Moon.reportDay(zonedReport, date, use12Hour)
     return day ? day.glyph : ""
@@ -2785,6 +2789,45 @@ KeyboardPanel {
             RowLayout {
               width: parent.width
               spacing: Style.space(6)
+
+              // The moon's illumination, one point per day at the cell centre,
+              // behind the cells. Repaints only when its inputs change.
+              Canvas {
+                id: moonCurve
+                Layout.ignoreLayout: true
+                z: -1
+                x: 0
+                y: 0
+                width: parent.width
+                height: parent.height
+                property var series: root.moonSeries
+                property color stroke: Util.alpha(Color.accent, 0.35)
+
+                onSeriesChanged: requestPaint()
+                onStrokeChanged: requestPaint()
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+
+                onPaint: {
+                  var ctx = getContext("2d")
+                  ctx.clearRect(0, 0, width, height)
+                  var points = Moon.curvePoints(series, width, height, Style.space(6), Style.space(14))
+                  var segments = Moon.curveSegments(points)
+                  if (segments.length === 0) return
+                  ctx.strokeStyle = stroke.toString()
+                  ctx.lineWidth = 1.5
+                  ctx.lineCap = "round"
+                  ctx.beginPath()
+                  var last = null
+                  for (var i = 0; i < segments.length; i++) {
+                    var s = segments[i]
+                    if (s.p0 !== last) ctx.moveTo(s.p0.x, s.p0.y)
+                    ctx.bezierCurveTo(s.c1.x, s.c1.y, s.c2.x, s.c2.y, s.p1.x, s.p1.y)
+                    last = s.p1
+                  }
+                  ctx.stroke()
+                }
+              }
 
               Repeater {
                 model: root.daily
