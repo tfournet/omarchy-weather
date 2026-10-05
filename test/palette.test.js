@@ -158,6 +158,34 @@ test("light themes are darkened, not left pale", () => {
   assert.ok(Palette.luminance(roles.snow) < Palette.luminance("#80f0f0"))
 })
 
+// The cards are painted on the popup surface, which can differ from the global
+// background, so colours are lifted against the surface they are drawn on.
+test("colours are checked against the popup surface, not the global background", () => {
+  // Dark global theme, light popups.
+  const lightPopup = Object.assign({}, DARK, { surface: "#f5f5f5", surfaceText: "#222222" })
+  const onPopup = Palette.roles(lightPopup, {})
+  const onGlobal = Palette.roles(DARK, {})
+  assert.notDeepEqual(onPopup, onGlobal)
+  for (const [key, color] of everyRole(onPopup)) {
+    assert.ok(Palette.contrast(color, "#f5f5f5") >= 3, `${key} ${color} on the light popup`)
+  }
+  for (const key of ["rainAmount", "tempHigh", "tempLow", "tideHigh", "tideLow"]) {
+    assert.ok(Palette.contrast(onPopup[key], "#f5f5f5") >= 4.5, key)
+  }
+  assert.ok(Palette.luminance(onPopup.sun) < Palette.luminance(onGlobal.sun))
+  // Light global theme, dark popups.
+  const darkPopup = Object.assign({}, LIGHT, { surface: "#101820", surfaceText: "#e8e8e8" })
+  for (const [key, color] of everyRole(Palette.roles(darkPopup, {}))) {
+    assert.ok(Palette.contrast(color, "#101820") >= 3, `${key} ${color} on the dark popup`)
+  }
+})
+
+test("a missing or malformed surface falls back to the global background", () => {
+  for (const bad of [undefined, null, "", "red", 5, "#12"]) {
+    assert.deepEqual(Palette.roles(Object.assign({}, DARK, { surface: bad, surfaceText: bad }), {}), Palette.roles(DARK, {}))
+  }
+})
+
 test("a theme with no mode is judged by its background", () => {
   const noMode = Object.assign({}, LIGHT)
   delete noMode.mode

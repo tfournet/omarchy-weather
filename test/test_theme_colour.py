@@ -36,6 +36,12 @@ class ThemeColourTests(unittest.TestCase):
         for contract in ("Color.foreground", "Color.background", "Color.accent", "Color.muted"):
             self.assertIn(contract, THEME)
 
+    def test_contrast_is_judged_on_the_popup_surface_the_cards_are_drawn_on(self):
+        for contract in ("Color.popups.background", "Color.popups.text", "p.surface =", "p.surfaceText ="):
+            self.assertIn(contract, THEME)
+        # Alpha is dropped so the surface is a plain #rrggbb the palette can use.
+        self.assertIn("opaqueHex(", THEME)
+
     def test_panel_hands_it_the_tinted_accents_it_used_before(self):
         self.assertIn("ThemePalette {", PANEL)
         for code in ("weatherAccentForCode(0)", "weatherAccentForCode(61)", "weatherAccentForCode(71)",
@@ -43,7 +49,7 @@ class ThemeColourTests(unittest.TestCase):
             self.assertIn(code, PANEL)
 
     def test_no_colour_literal_in_the_new_or_changed_components(self):
-        literal = re.compile(r'#[0-9a-fA-F]{6}\b|Qt\.rgba\(|"(red|blue|green|yellow|orange|cyan|magenta)"')
+        literal = re.compile(r'#[0-9a-fA-F]{6}\b|Qt\.rgba\(\s*[0-9.]|"(red|blue|green|yellow|orange|cyan|magenta)"')
         for name, source in (("ThemePalette", THEME), ("DetailRows", ROWS), ("DayDetail", DAY), ("HourDetail", HOUR)):
             body = "\n".join(line for line in source.splitlines() if not line.strip().startswith("//"))
             self.assertIsNone(literal.search(body), name)

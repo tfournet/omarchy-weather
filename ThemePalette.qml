@@ -18,13 +18,23 @@ Item {
   // Parsed colors.toml: mode and the named colours, empty until it loads.
   property var theme: ({ mode: "" })
 
+  // A colour as plain #rrggbb, alpha dropped, which is what Palette.js reads.
+  function opaqueHex(c) {
+    return Qt.rgba(c.r, c.g, c.b, 1).toString()
+  }
+
+  // The cards and the panel are painted on the popup surface, which a theme can
+  // make different from the global background, so contrast is judged against
+  // that: Color.popups.background, with Color.popups.text on it.
   readonly property var inputs: {
     var p = {}
     for (var key in theme) p[key] = theme[key]
-    p.foreground = String(Color.foreground)
-    p.background = String(Color.background)
-    p.accent = String(Color.accent)
-    p.muted = String(Color.muted)
+    p.foreground = opaqueHex(Color.foreground)
+    p.background = opaqueHex(Color.background)
+    p.accent = opaqueHex(Color.accent)
+    p.muted = opaqueHex(Color.muted)
+    p.surface = opaqueHex(Color.popups.background)
+    p.surfaceText = opaqueHex(Color.popups.text)
     return p
   }
 

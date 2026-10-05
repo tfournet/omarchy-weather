@@ -121,14 +121,21 @@ function roles(palette, fallbacks) {
   var p = isObject(palette) ? palette : {}
   var f = isObject(fallbacks) ? fallbacks : {}
 
+  // The colours are drawn on the popup surface, which can differ from the
+  // global background, so `surface` (with `surfaceText` on it) wins when given.
+  var onSurface = isHex(p.surface)
   var light
-  if (p.mode === "light") light = true
+  if (onSurface) light = luminance(p.surface) > 0.5
+  else if (p.mode === "light") light = true
   else if (p.mode === "dark") light = false
   else light = isHex(p.background) ? luminance(p.background) > 0.5 : false
   var defaults = light ? DEFAULT_LIGHT : DEFAULT_DARK
 
-  var background = (isHex(p.background) ? p.background : defaults.background).toLowerCase()
-  var foreground = (isHex(p.foreground) ? p.foreground : defaults.foreground).toLowerCase()
+  var background = (onSurface ? p.surface : (isHex(p.background) ? p.background : defaults.background)).toLowerCase()
+  var foreground = defaults.foreground
+  if (onSurface && isHex(p.surfaceText)) foreground = p.surfaceText
+  else if (isHex(p.foreground) && (!onSurface || contrast(p.foreground.toLowerCase(), background) >= TEXT_CONTRAST)) foreground = p.foreground
+  foreground = foreground.toLowerCase()
   var accent = (isHex(p.accent) ? p.accent : defaults.accent).toLowerCase()
 
   var resolve = function(name, fallbackKey, minRatio) {
