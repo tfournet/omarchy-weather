@@ -25,13 +25,16 @@ Column {
     return hex !== "" ? hex : foreground
   }
 
-  // One piece of a value.
+  // One piece of a value. An inline component cannot see this file's ids, so
+  // the colour and font family come in as properties from where it is used.
   component Segment: Text {
     required property var modelData
+    property color tint: Color.foreground
+    property string family: ""
     textFormat: Text.PlainText
     text: modelData.text
-    color: grid.segmentColor(modelData.tone)
-    font.family: grid.fontFamily
+    color: tint
+    font.family: family
     font.pixelSize: Style.font.bodySmall
   }
 
@@ -67,7 +70,10 @@ Column {
         visible: false
         Repeater {
           model: entry.parts
-          Segment {}
+          Segment {
+            tint: grid.segmentColor(modelData.tone)
+            family: grid.fontFamily
+          }
         }
       }
 
@@ -76,7 +82,10 @@ Column {
         anchors.right: parent.right
         Repeater {
           model: entry.parts
-          Segment {}
+          Segment {
+            tint: grid.segmentColor(modelData.tone)
+            family: grid.fontFamily
+          }
         }
       }
 
@@ -87,7 +96,10 @@ Column {
         width: parent.width
         Repeater {
           model: entry.parts
-          Segment {}
+          Segment {
+            tint: grid.segmentColor(modelData.tone)
+            family: grid.fontFamily
+          }
         }
       }
     }
