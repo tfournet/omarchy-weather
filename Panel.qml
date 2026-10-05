@@ -8,6 +8,7 @@ import "Model.js" as Model
 import "Detail.js" as Detail
 import "Moon.js" as Moon
 import "Zone.js" as Zone
+import "Tides.js" as Tides
 import "RadarModel.js" as RadarModel
 
 Panel {
@@ -353,8 +354,98 @@ Panel {
     ? Detail.hourDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour)
     : (detailSelection.kind === "day"
       ? Detail.dayDetail(zonedReport, detailSelection.index, useImperial, use12Hour,
-        function(d) { return Qt.formatDate(d, "ddd MMM d") })
+        function(d) { return Qt.formatDate(d, "ddd MMM d") }, tideInfo)
       : null)
+
+  // ---- Tides. The nearest station comes from the index shipped with the
+  //      plugin; predictions are fetched only while a day card is open, at most
+  //      once a day per station, and kept under ~/.local/state (the shell
+  //      rebuilds every plugin service when a file inside the plugin changes).
+  readonly property bool tidesEnabled: setting("tidesEnabled", true) !== false
+  readonly property real tideMaxKm: {
+    var km = Number(setting("tideMaxDistanceKm", 40))
+    return isFinite(km) && km > 0 ? km : 40
+  }
+  readonly property string tideOverride: String(setting("tideStation", ""))
+  property var tideStations: []
+  property var tideCache: ({ version: 1, stations: {} })
+  property bool tideCacheLoaded: false
+  property var tideRequest: null
+  property real tideRetryAt: 0
+
+  readonly property var tideChoice: tidesEnabled && dailyForecastReport
+    ? Tides.chooseStation(tideStations, dailyForecastReport.latitude, dailyForecastReport.longitude, tideMaxKm, tideOverride)
+    : null
+  readonly property string tideKey: tideChoice ? tideChoice.station.provider + ":" + tideChoice.station.id : ""
+  readonly property var tideInfo: tideChoice
+    ? { station: tideChoice.station, distanceKm: tideChoice.km, events: Tides.eventsFor(tideCache, tideKey) }
+    : null
+
+  onTideKeyChanged: ensureTides()
+  onDetailSelectionChanged: ensureTides()
+
+  function ensureTides() {
+    if (!tidesEnabled || detailSelection.kind !== "day" || !tideChoice || !tideCacheLoaded) return
+    if (tideProc.running || Date.now() < tideRetryAt) return
+    if (!Tides.needsFetch(tideCache, tideKey, Date.now())) return
+    var win = Tides.windowFor(dailyForecastReport)
+    if (!win) return
+    var argv = Tides.PROVIDERS[tideChoice.station.provider].request(tideChoice.station.id, win.fromMs, win.toMs)
+    if (!argv) return
+    tideRequest = { key: tideKey, provider: tideChoice.station.provider }
+    tideProc.command = argv
+    tideProc.running = true
+  }
+
+  // A response answers the station it was asked for. If the location moved on
+  // while curl ran it is dropped, and the new station is fetched instead.
+  function finishTideFetch(raw) {
+    var asked = tideRequest
+    tideRequest = null
+    if (asked && Tides.isCurrent(asked, tideKey)) {
+      var events = Model.rejectOversized(raw, Tides.MAX_TIDE_BYTES) ? null : Tides.PROVIDERS[asked.provider].parse(raw)
+      if (events === null) {
+        tideRetryAt = Date.now() + 10 * 60 * 1000
+      } else {
+        tideCache = Tides.withEntry(tideCache, asked.key, events, Date.now())
+        tideCacheFile.setText(Tides.serializeCache(tideCache))
+      }
+    }
+    ensureTides()
+  }
+
+  FileView {
+    id: tideIndexFile
+    path: root.tidesEnabled ? Tides.localPath(Qt.resolvedUrl("tide-stations.json").toString()) : ""
+    printErrors: false
+    onLoaded: root.tideStations = Tides.parseIndex(text())
+    onLoadFailed: root.tideStations = []
+  }
+
+  FileView {
+    id: tideCacheFile
+    path: root.tidesEnabled ? Quickshell.env("HOME") + "/.local/state/omarchy/detailed-weather-tides.json" : ""
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      root.tideCache = Tides.parseCache(text())
+      root.tideCacheLoaded = true
+      root.ensureTides()
+    }
+    onLoadFailed: {
+      root.tideCache = Tides.parseCache("")
+      root.tideCacheLoaded = true
+      root.ensureTides()
+    }
+  }
+
+  Process {
+    id: tideProc
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.finishTideFetch(String(text || ""))
+    }
+  }
 
   function toggleDetail(kind, reportIndex) {
     detailSelection = Detail.nextSelection(detailSelection, kind, reportIndex)

@@ -84,6 +84,20 @@ Forecast-panel and bar-pill units follow `auto` (locale and country),
 `metric`, or `imperial`. The bar temperature only shows when **Show
 temperature on the bar** is on.
 
+### Detail cards, moon and tides
+
+Click an hourly card or a day (in the strip or the orbit) for its detail card;
+click it again, click outside, or press Escape to close it. The day card shows
+the moon (phase, illumination, moonrise and moonset, computed locally) and,
+when a tide station is within range, that day's highs and lows. Tide
+predictions come from NOAA CO-OPS (US coasts and territories) or the Canadian
+Hydrographic Service, using a station index shipped in the plugin
+(`tide-stations.json`, regenerate with `scripts/build-tide-stations.py`). They
+are fetched only while a day card is open, at most once a day per station, and
+cached in `~/.local/state/omarchy/detailed-weather-tides.json`. Turn them off
+with `tidesEnabled`; `tideMaxDistanceKm` sets the range and `tideStation`
+(`noaa:9414290`) pins one station.
+
 ### Open radar
 
 **Open radar** on the forecast launches the saved site in your default
@@ -184,6 +198,9 @@ the bar settings form). `shell.json` hot-reloads on save.
 | `showBarTemp` | `false` | Current temperature next to the bar glyph |
 | `forecastOrbit` | `false` | Orbital ten-day forecast instead of the compact strip |
 | `orbitAutoSpin` | `true` | Advance the day orbit after 6.5 seconds idle |
+| `tidesEnabled` | `true` | Tides in the day card when a station is in range |
+| `tideMaxDistanceKm` | `40` | How far away the nearest tide station may be |
+| `tideStation` | (empty) | Optional `provider:id` override, e.g. `noaa:9414290` |
 | `alertsEnabled` | `false` | Storm alerts for home |
 | `alertRadiusKm` | `100` | How far around home to sample |
 | `alertMinIntensity` | `Heavy` | `Light` / `Moderate` / `Heavy` / `Severe` |
@@ -204,6 +221,8 @@ The built-in weather widget comes back. `weather.json` is left alone.
 | Source | Used for |
 |--------|----------|
 | Open-Meteo | Current, hourly, daily, air quality, city search |
+| tidesandcurrents.noaa.gov (NOAA CO-OPS) | US only, day card open only: high/low tide predictions |
+| api-iwls.dfo-mpo.gc.ca (Canadian Hydrographic Service) | Canada only, day card open only: high/low tide predictions |
 | api.weather.gov (NWS) | US only, storm alerts only: watches and warnings in force, and the local office's probability of precipitation |
 | wttr.in | IP auto-detect when no home coordinates are stored |
 | RainViewer / NOAA / Windy / WU | Opened in the browser by Open radar (user's saved site) |

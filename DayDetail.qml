@@ -151,6 +151,37 @@ Column {
     }
   }
 
-  // SLOT: tides (feature 3) — that day's highs and lows and the station.
-  // Stays empty on this branch.
+  // Tides: only when a station is in range.
+  Column {
+    width: parent.width
+    spacing: Style.space(6)
+    visible: !!root.card && !!root.card.tides
+
+    Text {
+      textFormat: Text.PlainText
+      width: parent.width
+      elide: Text.ElideRight
+      text: root.card && root.card.tides ? root.card.tides.station : ""
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    DetailRows {
+      width: parent.width
+      entries: root.card && root.card.tides ? root.card.tides.rows : []
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+    }
+
+    Text {
+      textFormat: Text.PlainText
+      width: parent.width
+      wrapMode: Text.WordWrap
+      text: root.card && root.card.tides ? root.card.tides.datum + " · " + root.card.tides.credit : ""
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+  }
 }

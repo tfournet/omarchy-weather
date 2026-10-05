@@ -33,6 +33,9 @@
       "showBarTemp": false,
       "forecastOrbit": false,
       "orbitAutoSpin": true,
+      "tidesEnabled": true,
+      "tideMaxDistanceKm": 40,
+      "tideStation": "",
       "alertsEnabled": false,
       "alertRadiusKm": 100,
       "alertMinIntensity": "Heavy",
@@ -115,6 +118,30 @@
         "label": "Auto-spin forecast orbit",
         "defaultValue": true,
         "description": "Advance the orbital day carousel after 6.5 seconds without interaction. Pauses while the pointer is over it. Only applies when the orbital forecast is on."
+      },
+      {
+        "key": "tidesEnabled",
+        "type": "boolean",
+        "label": "Tides",
+        "defaultValue": true,
+        "description": "High and low tides in the day card, from NOAA (US coasts) or the Canadian Hydrographic Service. Only when a tide station is near your location; nothing is requested otherwise."
+      },
+      {
+        "key": "tideMaxDistanceKm",
+        "type": "integer",
+        "label": "Tide station range (km)",
+        "min": 5,
+        "max": 200,
+        "step": 5,
+        "defaultValue": 40,
+        "description": "How far away the nearest tide station may be."
+      },
+      {
+        "key": "tideStation",
+        "type": "string",
+        "label": "Tide station override",
+        "defaultValue": "",
+        "description": "Optional provider:id, for example noaa:9414290, to use one station whatever the distance. Blank picks the nearest."
       },
       {
         "key": "alertsEnabled",
