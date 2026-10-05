@@ -265,7 +265,8 @@ test("day card carries the moon for the forecast's own place and zone", () => {
   r.utc_offset_seconds = -21600
   const card = Detail.dayDetail(r, 0, false, true)
   assert.equal(card.moon.glyph, Moon.dayInfo("2026-10-05", 39.74, -104.99, -21600, true).glyph)
-  assert.equal(card.moon.rows.find(x => x.key === "moonPhase").value, "Waning Crescent · 26%")
+  assert.equal(card.moon.phase, "Waning Crescent · 26%")
+  assert.deepEqual(card.moon.rows.map(x => x.key), ["moonrise", "moonset"])
   assert.match(card.moon.rows.find(x => x.key === "moonrise").value, /^1:\d\d AM$/)
   assert.match(card.moon.rows.find(x => x.key === "moonset").value, /^4:\d\d PM$/)
 })

@@ -76,6 +76,66 @@ test("times are shown in the location's clock, 12 or 24 hour", () => {
   assert.match(day.set, /^4:(0[3-9]|1\d|2[0-3]) PM$/)
 })
 
+// New York across the end of daylight-saving time (Nov 1 2026, 06:00 UTC). The
+// forecast was fetched on Oct 26, so its single offset is EDT, -4h. Reference,
+// US Naval Observatory rstt/oneday coords=40.7128,-74.006, fetched 2026-10-05:
+//   2026-10-31 (tz -4) set 13:30, rise 22:59
+//   2026-11-01 (tz -5) set 13:07, rise 23:14
+//   2026-11-02 (tz -5) set 13:37, no rise that day
+const { readFileSync } = require("node:fs")
+const { join } = require("node:path")
+const Zone = loadLibrary("Zone.js")
+const NY_REPORT = { latitude: 40.7128, longitude: -74.006, timezone: "America/New_York", utc_offset_seconds: -14400 }
+function nyZone() {
+  const table = Zone.parseTable(readFileSync(join(__dirname, "..", "tz-transitions.json"), "utf8"))
+  return Zone.forReport(NY_REPORT, table, Date.UTC(2026, 9, 26))
+}
+const nyDay = date => Moon.dayInfo(date, 40.7128, -74.006, nyZone(), false)
+// SunCalc is low precision: at 40.7N moonrise ran 9-11 minutes early here, moonset 0-4 off.
+const near = (text, hhmm, tolerance = 7) => Math.abs(minutesOf(text) - minutesOf(hhmm)) <= tolerance
+
+test("New York before the change reads in EDT", () => {
+  const day = nyDay("2026-10-31")
+  assert.ok(near(day.set, "13:30"), day.set)
+  assert.ok(near(day.rise, "22:59", 12), day.rise)
+})
+
+test("the day the clocks go back is read in the offset in force, not the fetch-time one", () => {
+  const day = nyDay("2026-11-01")
+  assert.ok(near(day.set, "13:07"), `set ${day.set}`)
+  assert.ok(near(day.rise, "23:14", 12), `rise ${day.rise}`)
+})
+
+test("the day after has the moonset an hour earlier than a fixed EDT offset would say, and no moonrise", () => {
+  const day = nyDay("2026-11-02")
+  assert.ok(near(day.set, "13:37"), `set ${day.set}`)
+  assert.equal(day.rise, "")
+  assert.equal(day.riseText, "—")
+  // The old single-offset reading, for contrast: an hour late.
+  const fixed = Moon.dayInfo("2026-11-02", 40.7128, -74.006, -14400, false)
+  assert.ok(Math.abs(minutesOf(fixed.set) - minutesOf("13:37")) >= 50, fixed.set)
+})
+
+test("a report carries its zone, so reportDay follows it", () => {
+  const zoned = Zone.attach(NY_REPORT, nyZone())
+  assert.ok(near(Moon.reportDay(zoned, "2026-11-02", false).set, "13:37"))
+  assert.ok(!near(Moon.reportDay(NY_REPORT, "2026-11-02", false).set, "13:37"))
+})
+
+test("a moonrise or moonset in the 25-hour day is not lost, and none lands on the wrong day", () => {
+  const first = nyDay("2026-11-01")
+  const next = nyDay("2026-11-02")
+  assert.notEqual(first.rise, "")
+  assert.equal(next.rise, "")
+})
+
+test("the cache tells zones apart", () => {
+  const a = Moon.dayCore("2026-11-02", 40.7128, -74.006, nyZone())
+  const b = Moon.dayCore("2026-11-02", 40.7128, -74.006, -14400)
+  assert.notEqual(a, b)
+  assert.equal(a, Moon.dayCore("2026-11-02", 40.7128, -74.006, nyZone()))
+})
+
 test("polar night with the moon up all day says Up all day", () => {
   const day = Moon.dayInfo("2026-12-24", 78.2232, 15.6267, 3600, false)
   assert.equal(day.status, "Up all day")

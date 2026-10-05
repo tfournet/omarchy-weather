@@ -110,22 +110,41 @@ Column {
   }
 
   // Moon: only when the forecast says where it is.
-  Row {
+  Column {
     width: parent.width
-    spacing: Style.space(8)
+    spacing: Style.space(6)
     visible: !!root.card && !!root.card.moon
 
-    Text {
-      textFormat: Text.PlainText
-      anchors.verticalCenter: parent.verticalCenter
-      text: root.card && root.card.moon ? root.card.moon.glyph : ""
-      color: root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.display
+    // The phase line has the whole width beside the glyph and wraps rather
+    // than overlapping or losing its percentage.
+    Row {
+      width: parent.width
+      spacing: Style.space(8)
+
+      Text {
+        id: moonGlyphText
+        textFormat: Text.PlainText
+        text: root.card && root.card.moon ? root.card.moon.glyph : ""
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.display
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        width: parent.width - moonGlyphText.width - parent.spacing
+        anchors.verticalCenter: moonGlyphText.verticalCenter
+        wrapMode: Text.WordWrap
+        text: root.card && root.card.moon ? root.card.moon.phase : ""
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.bold: true
+      }
     }
 
     DetailRows {
-      width: parent.width - parent.spacing - Style.space(28)
+      width: parent.width
       entries: root.card && root.card.moon ? root.card.moon.rows : []
       foreground: root.foreground
       fontFamily: root.fontFamily

@@ -172,8 +172,8 @@ function moonDetail(report, date, twelveHour) {
   if (!day) return null
   return {
     glyph: day.glyph,
+    phase: day.name + " · " + day.percent + "%",
     rows: [
-      row("moonPhase", "Moon", day.name + " · " + day.percent + "%"),
       row("moonrise", "Moonrise", day.riseText),
       row("moonset", "Moonset", day.setText)
     ]

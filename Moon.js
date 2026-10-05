@@ -6,6 +6,7 @@
 // It is a low-precision model, good to a few minutes for rise and set.
 .pragma library
 .import "Model.js" as Model
+.import "Zone.js" as Zone
 
 var RAD = Math.PI / 180
 var DAY_MS = 86400000
@@ -98,16 +99,18 @@ function moonAltitude(ms, latitude, longitude) {
   return h + 0.0002967 / Math.tan(above + 0.00312536 / (above + 0.08901179))
 }
 
-// Rise and set within the 24 hours after startMs, as epoch ms, found by
-// fitting a parabola through each pair of hours and looking for a zero.
-function riseSet(startMs, latitude, longitude) {
+// Rise and set within [startMs, endMs) as epoch ms (a day is 23 to 25 hours
+// where clocks change), found by fitting a parabola through each pair of hours
+// and looking for a zero. An event past the end belongs to the next day.
+function riseSet(startMs, endMs, latitude, longitude) {
   var hc = 0.133 * RAD
   var at = function(hours) { return moonAltitude(startMs + hours * 3600000, latitude, longitude) - hc }
   var h0 = at(0)
   var rise = null
   var set = null
   var ye = 0
-  for (var i = 1; i <= 24; i += 2) {
+  var span = Math.ceil((endMs - startMs) / 3600000)
+  for (var i = 1; i < span + 1; i += 2) {
     var h1 = at(i)
     var h2 = at(i + 1)
     var a = (h0 + h2) / 2 - h1
@@ -136,11 +139,14 @@ function riseSet(startMs, latitude, longitude) {
     if (rise !== null && set !== null) break
     h0 = h2
   }
+  var always = rise === null && set === null
+  var riseMs = rise === null ? null : startMs + rise * 3600000
+  var setMs = set === null ? null : startMs + set * 3600000
   return {
-    riseMs: rise === null ? null : startMs + rise * 3600000,
-    setMs: set === null ? null : startMs + set * 3600000,
-    alwaysUp: rise === null && set === null && ye > 0,
-    alwaysDown: rise === null && set === null && ye <= 0
+    riseMs: riseMs !== null && riseMs < endMs ? riseMs : null,
+    setMs: setMs !== null && setMs < endMs ? setMs : null,
+    alwaysUp: always && ye > 0,
+    alwaysDown: always && ye <= 0
   }
 }
 
@@ -148,38 +154,27 @@ function validNumber(v, min, max) {
   return typeof v === "number" && isFinite(v) && v >= min && v <= max
 }
 
-// Local midnight of "yyyy-mm-dd" as epoch ms, given the zone's offset from UTC.
-function localMidnight(dateString, offsetSec) {
-  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof dateString === "string" ? dateString : "")
-  if (!m) return null
-  var y = Number(m[1])
-  var mo = Number(m[2]) - 1
-  var day = Number(m[3])
-  var utc = Date.UTC(y, mo, day)
-  var check = new Date(utc)
-  if (check.getUTCMonth() !== mo || check.getUTCDate() !== day) return null
-  return utc - offsetSec * 1000
-}
-
 // The numbers for one date at one place, cached per date and place so the
 // ten-day strip and the day card never repeat the work. Null when the input
 // is not a real date, place and offset.
-function dayCore(dateString, latitude, longitude, offsetSec) {
+function dayCore(dateString, latitude, longitude, zoneOrOffset) {
   if (!validNumber(latitude, -90, 90) || !validNumber(longitude, -180, 180)) return null
-  if (!validNumber(offsetSec, -86400, 86400)) return null
-  var start = localMidnight(dateString, offsetSec)
-  if (start === null) return null
+  var zone = Zone.normalize(zoneOrOffset)
+  if (zone === null) return null
+  var start = Zone.midnight(zone, dateString)
+  var end = Zone.midnight(zone, Zone.nextDate(dateString))
+  if (start === null || end === null || end <= start) return null
 
-  var key = dateString + "|" + latitude.toFixed(3) + "|" + longitude.toFixed(3) + "|" + offsetSec
+  var key = dateString + "|" + latitude.toFixed(3) + "|" + longitude.toFixed(3) + "|" + zone.key
   if (cache[key]) return cache[key]
 
-  var lit = illuminationAt(start + DAY_MS / 2)
-  var times = riseSet(start, latitude, longitude)
+  var lit = illuminationAt(start + (end - start) / 2)
+  var times = riseSet(start, end, latitude, longitude)
   var core = {
     phase: lit.phase,
     fraction: lit.fraction,
     latitude: latitude,
-    offsetSec: offsetSec,
+    zone: zone,
     riseMs: times.riseMs,
     setMs: times.setMs,
     alwaysUp: times.alwaysUp,
@@ -198,27 +193,19 @@ function cacheSize() {
   return cacheCount
 }
 
-// Wall-clock "HH:MM" in the location's zone, or "" when there is no event.
-function clockAt(ms, offsetSec) {
-  if (ms === null) return ""
-  var minutes = Math.round((ms + offsetSec * 1000) / 60000)
-  var inDay = ((minutes % 1440) + 1440) % 1440
-  return Model.pad2(Math.floor(inDay / 60)) + ":" + Model.pad2(inDay % 60)
-}
-
 function eventText(core, ms, twelveHour) {
   if (core.alwaysUp) return "Up all day"
   if (core.alwaysDown) return "Down all day"
-  var hhmm = clockAt(ms, core.offsetSec)
+  var hhmm = ms === null ? "" : Zone.clock(core.zone, ms)
   return hhmm ? Model.formatClock(hhmm, twelveHour, false) : "—"
 }
 
 // What the day card and the ten-day strip show for one date.
-function dayInfo(dateString, latitude, longitude, offsetSec, twelveHour) {
-  var core = dayCore(dateString, latitude, longitude, offsetSec)
+function dayInfo(dateString, latitude, longitude, zoneOrOffset, twelveHour) {
+  var core = dayCore(dateString, latitude, longitude, zoneOrOffset)
   if (!core) return null
-  var rise = clockAt(core.riseMs, offsetSec)
-  var set = clockAt(core.setMs, offsetSec)
+  var rise = core.riseMs === null ? "" : Zone.clock(core.zone, core.riseMs)
+  var set = core.setMs === null ? "" : Zone.clock(core.zone, core.setMs)
   return {
     name: phaseName(core.phase),
     percent: Math.round(core.fraction * 100),
@@ -232,8 +219,9 @@ function dayInfo(dateString, latitude, longitude, offsetSec, twelveHour) {
 }
 
 // dayInfo for the place and zone the forecast itself was for (Open-Meteo
-// echoes them back), so a moon can never describe a different place.
+// echoes them back; the zone is the one attached to the report), so a moon can
+// never describe a different place.
 function reportDay(report, dateString, twelveHour) {
   if (!report || typeof report !== "object") return null
-  return dayInfo(dateString, report.latitude, report.longitude, report.utc_offset_seconds, twelveHour)
+  return dayInfo(dateString, report.latitude, report.longitude, Zone.of(report), twelveHour)
 }
