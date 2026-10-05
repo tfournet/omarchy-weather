@@ -133,6 +133,37 @@ class TideWiringTests(unittest.TestCase):
             self.assertIn(contract, DAY)
         self.assertNotIn("SLOT: tides", DAY)
 
+    def test_the_wave_is_one_canvas_behind_the_hourly_cells(self):
+        self.assertEqual(PANEL.count("id: tideWaveCanvas"), 1)
+        strip = PANEL.split("id: hourlyStrip", 1)[1].split("// ---- METRICS", 1)[0]
+        self.assertIn("id: tideWaveCanvas", strip)
+        body = self.wave_canvas()
+        for contract in ("z: -1", "visible: root.tideWave !== null", "Tides.waveLayout(wave,", "arc("):
+            self.assertIn(contract, body)
+
+    def wave_canvas(self):
+        return PANEL.split("id: tideWaveCanvas", 1)[1].split("\n              }\n", 1)[0]
+
+    def test_the_wave_repaints_only_when_its_inputs_change(self):
+        body = self.wave_canvas()
+        for handler in ("onWaveChanged", "onStrokeChanged", "onWidthChanged", "onHeightChanged"):
+            self.assertIn(handler + ": requestPaint()", body)
+        self.assertEqual(len(re.findall(r"requestPaint\(\)", body)), 4)
+        for banned in ("Timer", "NumberAnimation", "FrameAnimation", "running", "Behavior"):
+            self.assertNotIn(banned, body)
+        self.assertNotIn("requestPaint", body.split("onPaint:", 1)[1])
+
+    def test_the_wave_does_no_work_and_asks_for_nothing_when_tides_are_inactive(self):
+        wave = block(PANEL, "readonly property var tideWave:", "\n\n")
+        # Guarded by the same station the card uses, and only cached events.
+        self.assertIn("tideInfo", wave)
+        self.assertIn("tideInfo.events", wave)
+        self.assertIn("Tides.wave(", wave)
+        self.assertIn("Tides.hourEpochs(dailyForecastReport, hourly)", wave)
+        self.assertIn(": null", wave)
+        # Still exactly one place that starts a request: the day card's.
+        self.assertEqual(PANEL.count("tideProc.running = true"), 1)
+
     def test_no_place_is_hard_coded(self):
         for source in (TIDES, PANEL, DAY):
             for city in ("San Francisco", "Vancouver", "Seattle", "New York", "Halifax"):

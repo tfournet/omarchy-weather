@@ -636,3 +636,172 @@ test("the day card carries tide rows when it is given a station", () => {
   assert.equal(Detail.dayDetail(report, 0, false, false).tides, null)
   assert.equal(Detail.dayDetail(report, 0, false, false, undefined, null).tides, null)
 })
+
+// ---- the tide wave behind the hourly strip -------------------------------------
+
+const HOUR_MS = 3600 * 1000
+const ev = (h, type, height) => ({ time: Date.UTC(2026, 9, 5, h), type, height })
+// High 2.0 at 06:00, low 0.0 at 12:00, high 2.0 at 18:00 (UTC).
+const SWING = [ev(6, "high", 2), ev(12, "low", 0), ev(18, "high", 2)]
+
+test("half-cosine interpolation is exact at the events", () => {
+  for (const e of SWING) assert.equal(Tides.waveHeight(SWING, e.time), e.height)
+})
+
+test("between events the height follows h0 + (h1 - h0) * (1 - cos(pi t)) / 2", () => {
+  const t0 = SWING[0].time
+  const t1 = SWING[1].time
+  for (const f of [0.1, 0.25, 0.5, 0.75, 0.9]) {
+    const expected = 2 + (0 - 2) * (1 - Math.cos(Math.PI * f)) / 2
+    assert.ok(Math.abs(Tides.waveHeight(SWING, t0 + f * (t1 - t0)) - expected) < 1e-12, String(f))
+  }
+  assert.equal(Tides.waveHeight(SWING, Date.UTC(2026, 9, 5, 9)), 1)
+})
+
+test("it falls monotonically from a high to a low and rises monotonically back", () => {
+  let last = Infinity
+  for (let m = 0; m <= 360; m += 5) {
+    const h = Tides.waveHeight(SWING, Date.UTC(2026, 9, 5, 6, m))
+    assert.ok(h <= last + 1e-12, `fall at ${m}`)
+    last = h
+  }
+  last = -Infinity
+  for (let m = 0; m <= 360; m += 5) {
+    const h = Tides.waveHeight(SWING, Date.UTC(2026, 9, 5, 12, m))
+    assert.ok(h >= last - 1e-12, `rise at ${m}`)
+    last = h
+  }
+  for (let m = 0; m <= 360; m += 5) {
+    const h = Tides.waveHeight(SWING, Date.UTC(2026, 9, 5, 6, m))
+    assert.ok(h >= 0 && h <= 2)
+  }
+})
+
+test("nothing is drawn before the first event or after the last", () => {
+  assert.equal(Tides.waveHeight(SWING, SWING[0].time - 1), null)
+  assert.equal(Tides.waveHeight(SWING, SWING[2].time + 1), null)
+  assert.equal(Tides.waveHeight([], SWING[0].time), null)
+  assert.equal(Tides.waveHeight(null, SWING[0].time), null)
+  assert.equal(Tides.waveHeight(SWING, NaN), null)
+  assert.equal(Tides.waveHeight(SWING, "x"), null)
+})
+
+test("a gap of more than 14 hours between events is not bridged", () => {
+  const edge = [ev(0, "high", 2), { time: Date.UTC(2026, 9, 5, 14), type: "low", height: 0 }]
+  assert.equal(Tides.waveHeight(edge, Date.UTC(2026, 9, 5, 7)), 1)
+  const wide = [ev(0, "high", 2), { time: Date.UTC(2026, 9, 5, 14, 0, 0, 1), type: "low", height: 0 }]
+  assert.equal(Tides.waveHeight(wide, Date.UTC(2026, 9, 5, 7)), null)
+  // The stretches either side of a gap still draw.
+  const split = [ev(0, "high", 2), ev(6, "low", 0), ev(23, "high", 2), ev(29, "low", 0)]
+  assert.notEqual(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 3)), null)
+  assert.equal(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 15)), null)
+  assert.notEqual(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 26)), null)
+})
+
+test("malformed or unsorted events are ignored or put in order", () => {
+  const messy = [ev(18, "high", 2), null, { time: "x", type: "low", height: 0 }, ev(6, "high", 2), ev(12, "low", 0), 5,
+    { time: Date.UTC(2026, 9, 5, 13), type: "low", height: NaN }]
+  assert.equal(Tides.waveHeight(messy, Date.UTC(2026, 9, 5, 9)), 1)
+})
+
+test("the hour axis is the report's own hourly strings read in the offset they were written in", () => {
+  const report = {
+    utc_offset_seconds: -14400,
+    hourly: { time: ["2026-11-01T00:00", "2026-11-01T01:00", "2026-11-01T02:00", "2026-11-01T03:00"] }
+  }
+  const hours = [{ reportIndex: 1 }, { reportIndex: 2 }, { reportIndex: 3 }]
+  assert.deepEqual(Tides.hourEpochs(report, hours), [Date.UTC(2026, 10, 1, 5), Date.UTC(2026, 10, 1, 6), Date.UTC(2026, 10, 1, 7)])
+  for (const bad of [[{ reportIndex: 9 }], [{ reportIndex: -1 }], [{}], [null], "x"]) assert.deepEqual(Tides.hourEpochs(report, bad), [])
+  assert.deepEqual(Tides.hourEpochs({ hourly: { time: ["2026-11-01T00:00"] } }, [{ reportIndex: 0 }]), [])
+  assert.deepEqual(Tides.hourEpochs(null, hours), [])
+})
+
+const hoursFrom = (h, n) => Array.from({ length: n }, (_, i) => Date.UTC(2026, 9, 5, h + i))
+
+test("the wave covers exactly the hours shown, half an hour either side of the first and last", () => {
+  const wave = Tides.wave(SWING, hoursFrom(5, 10)) // 05:00 .. 14:00
+  assert.equal(wave.fromMs, Date.UTC(2026, 9, 5, 4, 30))
+  assert.equal(wave.toMs, Date.UTC(2026, 9, 5, 14, 30))
+  const first = wave.samples[0]
+  const last = wave.samples[wave.samples.length - 1]
+  assert.equal(first.fi, -0.5)
+  assert.equal(last.fi, 9.5)
+  // 04:30-06:00 is before the first event: nothing drawn there.
+  assert.equal(first.h, null)
+  assert.notEqual(last.h, null)
+  assert.ok(wave.samples.every(s => s.fi >= -0.5 && s.fi <= 9.5))
+})
+
+test("marks are the highs and lows inside the span, and only those", () => {
+  const wave = Tides.wave(SWING, hoursFrom(5, 10))
+  assert.deepEqual(wave.marks.map(m => [m.type, m.fi, m.h]), [["high", 1, 2], ["low", 7, 0]])
+  const edgeIn = Tides.wave([ev(4, "low", 0), ev(5, "high", 2), ev(14, "low", 0), ev(15, "high", 2)], hoursFrom(5, 10))
+  assert.deepEqual(edgeIn.marks.map(m => m.fi), [0, 9])
+})
+
+test("with no events in range, or inputs that are not hours, there is no wave", () => {
+  assert.equal(Tides.wave(SWING, hoursFrom(20, 3)), null)
+  assert.equal(Tides.wave([], hoursFrom(5, 10)), null)
+  assert.equal(Tides.wave(null, hoursFrom(5, 10)), null)
+  assert.equal(Tides.wave(SWING, []), null)
+  assert.equal(Tides.wave(SWING, [NaN]), null)
+  assert.equal(Tides.wave(SWING, [Date.UTC(2026, 9, 5, 5), Date.UTC(2026, 9, 5, 8)]), null)
+})
+
+test("across the daylight-saving change the wave runs on real elapsed time", () => {
+  const zone = nyZone()
+  const report = { utc_offset_seconds: -14400, hourly: { time: [] } }
+  for (let h = 0; h < 8; h++) report.hourly.time.push(`2026-11-01T0${h}:00`)
+  const hours = report.hourly.time.map((_, i) => ({ reportIndex: i }))
+  const axis = Tides.hourEpochs(report, hours)
+  // Eight consecutive real hours; the wall clock repeats 01:00 on the way.
+  assert.deepEqual(axis.map((t, i) => i === 0 ? 1 : (t - axis[i - 1]) / HOUR_MS), [1, 1, 1, 1, 1, 1, 1, 1])
+  assert.deepEqual(axis.map(t => Zone.clock(zone, t)), ["00:00", "01:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00"])
+  // A high at 05:00Z and a low at 11:00Z: the wave is the same over the repeated hour as any other.
+  const events = [{ time: Date.UTC(2026, 10, 1, 5), type: "high", height: 2 }, { time: Date.UTC(2026, 10, 1, 11), type: "low", height: 0 }]
+  const wave = Tides.wave(events, axis)
+  const at = fi => wave.samples.find(s => s.fi === fi).h
+  assert.equal(at(1), 2 + (0 - 2) * (1 - Math.cos(Math.PI * 0)) / 2)
+  assert.ok(Math.abs(at(2) - (1 + Math.cos(Math.PI / 6))) < 1e-9)
+  assert.ok(Math.abs(at(3) - (1 + Math.cos(Math.PI / 3))) < 1e-9)
+  assert.deepEqual(wave.marks.map(m => [m.type, m.fi]), [["high", 1], ["low", 7]])
+  // Placed by local clock rather than UTC it would drift an hour: 05:00Z is 01:00 EDT, not 00:00 EST.
+  assert.equal(Zone.clock(zone, events[0].time), "01:00")
+})
+
+test("the layout scales to the visible span's min and max, in the lower part of the strip", () => {
+  const wave = Tides.wave(SWING, hoursFrom(5, 10))
+  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 10, height: 100 })
+  const ys = layout.path.filter(p => p !== null).map(p => p.y)
+  assert.ok(Math.min(...ys) >= 50 && Math.max(...ys) <= 100)
+  // The high mark is the visible maximum and sits highest, the low mark lowest.
+  const high = layout.marks.find(m => m.type === "high")
+  const low = layout.marks.find(m => m.type === "low")
+  assert.equal(high.y, Math.min(...ys))
+  assert.equal(low.y, Math.max(...ys))
+  // Cell centres: hour index 1 is the second cell, 44 px on, centre at 44 + 20.
+  assert.equal(high.x, 64)
+  assert.equal(low.x, 7 * 44 + 20)
+})
+
+test("the layout leaves gaps as nulls and a flat span in the middle of the band", () => {
+  const wave = Tides.wave(SWING, hoursFrom(5, 10))
+  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 10, height: 100 })
+  assert.equal(layout.path[0], null) // before the first event
+  assert.notEqual(layout.path[layout.path.length - 1], null)
+  const flat = Tides.wave([ev(5, "high", 1), ev(8, "low", 1)], hoursFrom(5, 4))
+  const l = Tides.waveLayout(flat, { cell: 40, gap: 4, count: 4, height: 100 })
+  const ys = new Set(l.path.filter(p => p !== null).map(p => p.y))
+  assert.equal(ys.size, 1)
+  const y = [...ys][0]
+  assert.ok(y > 50 && y < 100)
+})
+
+test("the layout refuses a missing wave or an unusable size", () => {
+  assert.equal(Tides.waveLayout(null, { cell: 40, gap: 4, count: 10, height: 100 }), null)
+  const wave = Tides.wave(SWING, hoursFrom(5, 10))
+  for (const bad of [null, {}, { cell: 0, gap: 4, count: 10, height: 100 }, { cell: 40, gap: 4, count: 10, height: 0 },
+    { cell: NaN, gap: 4, count: 10, height: 100 }]) {
+    assert.equal(Tides.waveLayout(wave, bad), null, JSON.stringify(bad))
+  }
+})

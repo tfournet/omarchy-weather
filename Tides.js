@@ -422,3 +422,135 @@ function dayTides(info, dateString, zoneOrOffset, useImperial, twelveHour) {
     credit: "Source: " + provider.attribution
   }
 }
+
+// ---- The tide wave behind the hourly strip ---------------------------------
+
+// Real tides give four or five turning points a day, 6 hours or so apart. A
+// longer stretch between consecutive events means data is missing, and drawing
+// a curve across it would invent one.
+var MAX_WAVE_GAP_MS = 14 * 3600000
+var HOUR_MS = 3600000
+var WAVE_SAMPLES_PER_HOUR = 4
+// The wave sits in the lower part of the strip: from 55% to 95% of its height.
+var WAVE_BAND_TOP = 0.55
+var WAVE_BAND_BOTTOM = 0.95
+
+// The valid events, in time order.
+function sortedEvents(events) {
+  if (!Array.isArray(events)) return []
+  var out = []
+  for (var i = 0; i < events.length; i++) if (validEvent(events[i])) out.push(events[i])
+  return out.sort(function(a, b) { return a.time - b.time })
+}
+
+// Height at ms between consecutive events by half-cosine interpolation,
+//   h(t) = h0 + (h1 - h0) * (1 - cos(pi * (t - t0) / (t1 - t0))) / 2,
+// the standard approximation: exact at each event, monotonic between a high
+// and a low. Null before the first event, after the last, and across a gap of
+// more than MAX_WAVE_GAP_MS.
+function heightIn(sorted, ms) {
+  for (var i = 0; i < sorted.length; i++) {
+    if (sorted[i].time === ms) return sorted[i].height
+    if (sorted[i].time > ms) {
+      if (i === 0) return null
+      var a = sorted[i - 1]
+      var b = sorted[i]
+      if (b.time - a.time > MAX_WAVE_GAP_MS) return null
+      return a.height + (b.height - a.height) * (1 - Math.cos(Math.PI * (ms - a.time) / (b.time - a.time))) / 2
+    }
+  }
+  return null
+}
+
+function waveHeight(events, ms) {
+  if (typeof ms !== "number" || !isFinite(ms)) return null
+  return heightIn(sortedEvents(events), ms)
+}
+
+// The instants of the hours the strip shows, from the report's own hourly
+// strings, which are written in the report's single offset. [] if any hour
+// cannot be read.
+function hourEpochs(report, hours) {
+  if (!isObject(report) || !isObject(report.hourly) || !Array.isArray(report.hourly.time) || !Array.isArray(hours)) return []
+  var offset = report.utc_offset_seconds
+  if (typeof offset !== "number" || !isFinite(offset)) return []
+  var out = []
+  for (var i = 0; i < hours.length; i++) {
+    var h = hours[i]
+    var stamp = isObject(h) && typeof h.reportIndex === "number" ? report.hourly.time[h.reportIndex] : null
+    var seconds = typeof stamp === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(stamp) ? Model.isoLocalToEpoch(stamp, offset) : 0
+    if (!seconds) return []
+    out.push(seconds * 1000)
+  }
+  return out
+}
+
+// The wave over consecutive hours `hourMs`, covering half an hour either side
+// of the first and last: samples at WAVE_SAMPLES_PER_HOUR a hour (fi is the
+// position in hours from the first cell's centre, h the height or null where
+// there is no curve), and a mark for each high or low inside the span. Null
+// when the hours are not consecutive or no stretch of the span has a curve.
+function wave(events, hourMs) {
+  if (!Array.isArray(hourMs) || hourMs.length < 1) return null
+  for (var i = 0; i < hourMs.length; i++) {
+    if (typeof hourMs[i] !== "number" || !isFinite(hourMs[i]) || (i > 0 && hourMs[i] - hourMs[i - 1] !== HOUR_MS)) return null
+  }
+  var sorted = sortedEvents(events)
+  var first = hourMs[0]
+  var from = first - HOUR_MS / 2
+  var to = hourMs[hourMs.length - 1] + HOUR_MS / 2
+  var samples = []
+  var drawn = false
+  var steps = hourMs.length * WAVE_SAMPLES_PER_HOUR
+  for (var k = 0; k <= steps; k++) {
+    var fi = -0.5 + k / WAVE_SAMPLES_PER_HOUR
+    var h = heightIn(sorted, first + fi * HOUR_MS)
+    if (h !== null) drawn = true
+    samples.push({ fi: fi, h: h })
+  }
+  if (!drawn) return null
+  var marks = []
+  for (var j = 0; j < sorted.length; j++) {
+    if (sorted[j].time >= from && sorted[j].time <= to) {
+      marks.push({ type: sorted[j].type, fi: (sorted[j].time - first) / HOUR_MS, h: sorted[j].height })
+    }
+  }
+  return { fromMs: from, toMs: to, samples: samples, marks: marks }
+}
+
+// Pixel positions for a wave over a strip of `count` cells of width `cell` with
+// `gap` between them and `height`. Heights are scaled to the visible span's own
+// min and max, within the lower band of the strip. path holds {x, y} or null
+// (a gap) per sample; marks hold {x, y, type}. Null for no wave or a bad size.
+function waveLayout(waveData, size) {
+  if (!isObject(waveData) || !isObject(size)) return null
+  if (!(size.cell > 0) || !(size.gap >= 0) || !(size.count > 0) || !(size.height > 0)) return null
+  var lo = Infinity
+  var hi = -Infinity
+  var i
+  for (i = 0; i < waveData.samples.length; i++) {
+    var h = waveData.samples[i].h
+    if (h !== null) {
+      lo = Math.min(lo, h)
+      hi = Math.max(hi, h)
+    }
+  }
+  for (i = 0; i < waveData.marks.length; i++) {
+    lo = Math.min(lo, waveData.marks[i].h)
+    hi = Math.max(hi, waveData.marks[i].h)
+  }
+  var top = size.height * WAVE_BAND_TOP
+  var bottom = size.height * WAVE_BAND_BOTTOM
+  var xOf = function(fi) { return fi * (size.cell + size.gap) + size.cell / 2 }
+  var yOf = function(value) { return hi > lo ? top + (1 - (value - lo) / (hi - lo)) * (bottom - top) : (top + bottom) / 2 }
+  var path = []
+  for (i = 0; i < waveData.samples.length; i++) {
+    var s = waveData.samples[i]
+    path.push(s.h === null ? null : { x: xOf(s.fi), y: yOf(s.h) })
+  }
+  var marks = []
+  for (i = 0; i < waveData.marks.length; i++) {
+    marks.push({ x: xOf(waveData.marks[i].fi), y: yOf(waveData.marks[i].h), type: waveData.marks[i].type })
+  }
+  return { path: path, marks: marks }
+}

@@ -380,6 +380,13 @@ Panel {
     ? { station: tideChoice.station, distanceKm: tideChoice.km, events: Tides.eventsFor(tideCache, tideKey) }
     : null
 
+  // The tide wave behind the hourly strip: the cached high/low events for the
+  // station the card uses, over the hours shown. Null (and no work) when tides
+  // are inactive or no events are cached; it never starts a request itself.
+  readonly property var tideWave: tideInfo && tideInfo.events && tideInfo.events.length > 0
+    ? Tides.wave(tideInfo.events, Tides.hourEpochs(dailyForecastReport, hourly))
+    : null
+
   onTideKeyChanged: ensureTides()
   onDetailSelectionChanged: ensureTides()
 
@@ -3037,6 +3044,58 @@ KeyboardPanel {
               clip: true
               boundsBehavior: Flickable.StopAtBounds
               interactive: hourRow.implicitWidth > width + 0.5
+
+              // The tide wave, behind the cells. Repaints only when the wave,
+              // colour or size change.
+              Canvas {
+                id: tideWaveCanvas
+                visible: root.tideWave !== null
+                z: -1
+                x: hourlyStrip.edgeInset + hourlyStrip.cellGap
+                y: 0
+                width: root.hourly.length * hourlyStrip.fittedCellWidth + Math.max(0, root.hourly.length - 1) * hourlyStrip.cellGap
+                height: hourRow.height
+                property var wave: root.tideWave
+                property color stroke: Util.alpha(Color.accent, 0.4)
+
+                onWaveChanged: requestPaint()
+                onStrokeChanged: requestPaint()
+                onWidthChanged: requestPaint()
+                onHeightChanged: requestPaint()
+
+                onPaint: {
+                  var ctx = getContext("2d")
+                  ctx.clearRect(0, 0, width, height)
+                  if (!wave) return
+                  var layout = Tides.waveLayout(wave, {
+                    cell: hourlyStrip.fittedCellWidth, gap: hourlyStrip.cellGap, count: root.hourly.length, height: height })
+                  if (!layout) return
+                  ctx.strokeStyle = stroke.toString()
+                  ctx.lineWidth = 1.5
+                  ctx.lineJoin = "round"
+                  ctx.beginPath()
+                  var pen = false
+                  for (var i = 0; i < layout.path.length; i++) {
+                    var p = layout.path[i]
+                    if (p === null) {
+                      pen = false
+                    } else if (pen) {
+                      ctx.lineTo(p.x, p.y)
+                    } else {
+                      ctx.moveTo(p.x, p.y)
+                      pen = true
+                    }
+                  }
+                  ctx.stroke()
+                  ctx.fillStyle = stroke.toString()
+                  for (var j = 0; j < layout.marks.length; j++) {
+                    ctx.beginPath()
+                    ctx.arc(layout.marks[j].x, layout.marks[j].y, 3, 0, 2 * Math.PI)
+                    if (layout.marks[j].type === "high") ctx.fill()
+                    else ctx.stroke()
+                  }
+                }
+              }
 
               Row {
                 id: hourRow
