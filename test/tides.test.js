@@ -144,6 +144,60 @@ test("a lone DFO event cannot be told apart, so it is dropped", () => {
   assert.deepEqual(Tides.PROVIDERS.dfo.parse('[{"eventDate":"2026-10-05T03:00:00Z","value":1}]'), [])
 })
 
+// ---- bounds: a response cannot make the panel draw or cache an unbounded list
+
+const flood = n => JSON.stringify({ predictions: Array.from({ length: n }, () => ({ t: "2026-10-05 01:32", v: "1.7", type: "H" })) })
+
+test("4,500 identical NOAA events are one event", () => {
+  const raw = flood(4500)
+  assert.ok(raw.length > 190000)
+  assert.deepEqual(Tides.PROVIDERS.noaa.parse(raw), [{ time: Date.UTC(2026, 9, 5, 1, 32), type: "high", height: 1.7 }])
+})
+
+test("a flood of distinct NOAA times is cut to a few per day and a few days", () => {
+  const predictions = []
+  for (let i = 0; i < 4500; i++) {
+    const t = new Date(Date.UTC(2026, 9, 5) + i * 60000)
+    predictions.push({
+      t: t.toISOString().slice(0, 10) + " " + t.toISOString().slice(11, 16), v: String(i % 7), type: i % 2 ? "H" : "L"
+    })
+  }
+  const events = Tides.PROVIDERS.noaa.parse(JSON.stringify({ predictions }))
+  assert.ok(events.length <= Tides.MAX_EVENTS, String(events.length))
+  const perDay = {}
+  for (const e of events) perDay[Math.floor(e.time / 86400000)] = (perDay[Math.floor(e.time / 86400000)] || 0) + 1
+  for (const n of Object.values(perDay)) assert.ok(n <= Tides.MAX_PER_DAY, String(n))
+  for (let i = 1; i < events.length; i++) assert.ok(events[i].time >= events[i - 1].time)
+})
+
+test("a flood of DFO points is bounded the same way", () => {
+  const same = JSON.stringify(Array.from({ length: 4000 }, (_, i) => ({ eventDate: "2026-10-05T03:25:00Z", value: i % 5 })))
+  assert.ok(Tides.PROVIDERS.dfo.parse(same).length <= 1)
+  const spread = JSON.stringify(Array.from({ length: 4000 }, (_, i) => ({
+    eventDate: new Date(Date.UTC(2026, 9, 5) + i * 60000).toISOString().slice(0, 19) + "Z", value: i % 9 })))
+  const events = Tides.PROVIDERS.dfo.parse(spread)
+  assert.ok(events.length <= Tides.MAX_EVENTS, String(events.length))
+})
+
+test("real data is untouched by the bounds", () => {
+  assert.equal(Tides.PROVIDERS.noaa.parse(fixture("noaa-9414290-gmt.json")).length, 12)
+  assert.equal(Tides.PROVIDERS.dfo.parse(fixture("dfo-07735-wlp-hilo.json")).length, 8)
+})
+
+test("a flooded cache file is bounded when it is read, and when it is written", () => {
+  const events = Array.from({ length: 5000 }, () => ({ time: 5, type: "high", height: 1 }))
+  const text = JSON.stringify({ version: 1, stations: { "noaa:1": { fetchedAt: NOW, events } } })
+  assert.equal(Tides.eventsFor(Tides.parseCache(text), "noaa:1").length, 1)
+  const many = Array.from({ length: 5000 }, (_, i) => ({ time: i * 60000, type: "low", height: 1 }))
+  assert.ok(Tides.eventsFor(Tides.withEntry(Tides.parseCache(""), "noaa:1", many, NOW), "noaa:1").length <= Tides.MAX_EVENTS)
+})
+
+test("a day never draws more than a handful of rows", () => {
+  const events = Array.from({ length: 300 }, (_, i) => ({ time: Date.UTC(2026, 9, 5, 8) + i * 60000, type: i % 2 ? "high" : "low", height: i }))
+  const rows = Tides.dayTides({ station: SF, distanceKm: 1, events }, "2026-10-05", 0, false, false).rows
+  assert.ok(rows.length <= Tides.MAX_PER_DAY, String(rows.length))
+})
+
 // ---- time zone alignment ------------------------------------------------
 
 test("UTC events line up with NOAA's own local-time listing for the station", () => {

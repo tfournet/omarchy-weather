@@ -25,6 +25,10 @@ var REFETCH_MS = DAY_MS
 var CLOCK_SKEW_MS = 6 * 3600000
 var MAX_CACHED_STATIONS = 12
 var CHOICE_LIMIT = 128
+// Real tides give four or five turning points a day; a request spans about
+// twelve days. Anything past these is not tide data, whatever a response says.
+var MAX_PER_DAY = 6
+var MAX_EVENTS = MAX_PER_DAY * 14
 
 var KEY_PATTERN = /^(noaa|dfo):[A-Za-z0-9]+$/
 var NOAA_ID = /^[A-Za-z0-9]{1,12}$/
@@ -53,8 +57,24 @@ function tryParse(raw) {
   }
 }
 
-function sortByTime(events) {
-  return events.sort(function(a, b) { return a.time - b.time })
+// Sorted by time, repeats of the same time and type dropped, at most
+// MAX_PER_DAY per UTC day and MAX_EVENTS in all. Applied to everything that is
+// parsed, cached or drawn, so a hostile or broken response stays small.
+function boundEvents(events) {
+  var sorted = events.slice().sort(function(a, b) { return a.time - b.time })
+  var seen = {}
+  var perDay = {}
+  var out = []
+  for (var i = 0; i < sorted.length && out.length < MAX_EVENTS; i++) {
+    var e = sorted[i]
+    var key = e.time + "|" + (e.type || "")
+    var day = Math.floor(e.time / DAY_MS)
+    if (seen.hasOwnProperty(key) || (perDay[day] || 0) >= MAX_PER_DAY) continue
+    seen[key] = true
+    perDay[day] = (perDay[day] || 0) + 1
+    out.push(e)
+  }
+  return out
 }
 
 // "yyyy-mm-dd hh:mm" (UTC) -> epoch ms, or null for anything that is not a real time.
@@ -107,7 +127,7 @@ function noaaParse(raw) {
     if (time === null || height === null || !type) continue
     out.push({ time: time, type: type, height: height })
   }
-  return sortByTime(out)
+  return boundEvents(out)
 }
 
 // ---- Canada DFO IWLS ----------------------------------------------------
@@ -134,7 +154,7 @@ function dfoParse(raw) {
     if (!isFinite(time)) continue
     points.push({ time: time, height: e.value })
   }
-  sortByTime(points)
+  points = boundEvents(points)
   if (points.length < 2) return []
   var out = []
   for (var j = 0; j < points.length; j++) {
@@ -281,7 +301,7 @@ function parseCache(text) {
         events.push({ time: e.time, type: e.type, height: e.height })
       }
     }
-    cache.stations[key] = { fetchedAt: entry.fetchedAt, events: events }
+    cache.stations[key] = { fetchedAt: entry.fetchedAt, events: boundEvents(events) }
   }
   return cache
 }
@@ -312,7 +332,7 @@ function withEntry(cache, key, events, nowMs) {
   if (cache && isObject(cache.stations)) {
     for (var k in cache.stations) next.stations[k] = cache.stations[k]
   }
-  next.stations[key] = { fetchedAt: nowMs, events: events }
+  next.stations[key] = { fetchedAt: nowMs, events: boundEvents(events) }
 
   var keys = Object.keys(next.stations).sort(function(a, b) {
     return next.stations[b].fetchedAt - next.stations[a].fetchedAt
@@ -367,7 +387,7 @@ function dayEvents(events, dateString, offsetSec) {
   for (var i = 0; i < events.length; i++) {
     if (events[i].time >= start && events[i].time < start + DAY_MS) out.push(events[i])
   }
-  return out
+  return out.slice(0, MAX_PER_DAY)
 }
 
 function formatHeight(metres, useImperial) {
