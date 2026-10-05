@@ -101,7 +101,8 @@ station is within 100 km of the forecast location, `on` always uses the nearest
 station at any distance, and `off` never does. With `off`, or `auto` and no
 station in range, nothing is requested, cached or drawn.
 
-The tide wave behind the hourly strip is an approximate interpolation of those
+The tide chart under the hourly strip (a band labelled `TIDE · <station>`, with an
+`H`/`L` time at each high and low) is an approximate interpolation of those
 predictions, not an authoritative hourly prediction: it joins each predicted
 high to the next low with a half-cosine curve, which is a visual approximation
 and can differ materially from the real tide at some stations. It is drawn only

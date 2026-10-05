@@ -840,7 +840,7 @@ test("the layout scales to the visible span's min and max, in the lower part of 
   const wave = Tides.wave(SWING, hoursFrom(5, 10))
   const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 10, height: 100 })
   const ys = layout.path.filter(p => p !== null).map(p => p.y)
-  assert.ok(Math.min(...ys) >= 50 && Math.max(...ys) <= 100)
+  assert.ok(Math.min(...ys) >= Tides.WAVE_BAND_TOP * 100 - 1e-9 && Math.max(...ys) <= Tides.WAVE_BAND_BOTTOM * 100 + 1e-9)
   // The high mark is the visible maximum and sits highest, the low mark lowest.
   const high = layout.marks.find(m => m.type === "high")
   const low = layout.marks.find(m => m.type === "low")
@@ -861,7 +861,7 @@ test("the layout leaves gaps as nulls and a flat span in the middle of the band"
   const ys = new Set(l.path.filter(p => p !== null).map(p => p.y))
   assert.equal(ys.size, 1)
   const y = [...ys][0]
-  assert.ok(y > 50 && y < 100)
+  assert.ok(y > Tides.WAVE_BAND_TOP * 100 && y < Tides.WAVE_BAND_BOTTOM * 100)
 })
 
 test("the layout refuses a missing wave or an unusable size", () => {
@@ -917,4 +917,84 @@ test("a malformed state never fetches", () => {
   for (const bad of [null, undefined, {}, [], 5, "x"]) assert.equal(Tides.wantsFetch(bad), false)
   assert.equal(Tides.wantsFetch(Object.assign(ready(), { now: NaN })), false)
   assert.equal(Tides.wantsFetch(Object.assign(ready(), { cache: null })), true)
+})
+
+// ---- the wave must read as a tide chart ------------------------------------------
+
+const CDT = -5 * 3600 // Weeks Bay, Alabama, in October
+
+test("the band's label names the tide and the station", () => {
+  assert.equal(Tides.waveLabel({ name: "Weeks Bay" }), "TIDE · Weeks Bay")
+  assert.equal(Tides.waveLabel({ name: "  Point Atkinson \n" }), "TIDE · Point Atkinson")
+  for (const bad of [null, undefined, {}, { name: "" }, { name: "   " }, { name: 5 }, "Weeks Bay", []]) {
+    assert.equal(Tides.waveLabel(bad), "TIDE", JSON.stringify(bad))
+  }
+  assert.equal(Tides.waveLabel({ name: "a\u0000b\u001fc" }), "TIDE · abc")
+  assert.ok(Tides.waveLabel({ name: "x".repeat(200) }).length <= 48)
+})
+
+test("an event label is H or L and the time in the chosen clock", () => {
+  const high = Date.UTC(2026, 9, 5, 10, 37)
+  const low = Date.UTC(2026, 9, 6, 2, 34)
+  assert.equal(Tides.markLabel("high", high, CDT, true), "H 5:37 AM")
+  assert.equal(Tides.markLabel("low", low, CDT, true), "L 9:34 PM")
+  assert.equal(Tides.markLabel("high", high, CDT, false), "H 05:37")
+  assert.equal(Tides.markLabel("low", low, CDT, false), "L 21:34")
+})
+
+test("an event label follows the zone's wall clock across a clock change", () => {
+  const zone = nyZone()
+  assert.equal(Tides.markLabel("high", Date.UTC(2026, 10, 1, 5, 30), zone, false), "H 01:30")
+  assert.equal(Tides.markLabel("low", Date.UTC(2026, 10, 1, 6, 30), zone, false), "L 01:30")
+  assert.equal(Tides.markLabel("low", Date.UTC(2026, 10, 1, 6, 30), zone, true), "L 1:30 AM")
+})
+
+test("a label that cannot be made is empty, not a wrong time", () => {
+  for (const [type, ms, zone] of [["tide", 1, 0], ["high", NaN, 0], ["high", "x", 0], ["low", 1, "x"], [null, 1, 0]]) {
+    assert.equal(Tides.markLabel(type, ms, zone, true), "", JSON.stringify([type, ms, zone]))
+  }
+})
+
+test("marks carry their instant, and each gets a placed text label for both clocks", () => {
+  const events = Tides.PROVIDERS.noaa.parse(fixture("noaa-8765148-gmt.json"))
+  // The hourly strip from 06:00 to 21:00 local (11:00Z to 02:00Z).
+  const axis = Array.from({ length: 16 }, (_, i) => Date.UTC(2026, 9, 5, 11 + i))
+  const wave = Tides.wave(events, axis)
+  assert.deepEqual(wave.marks.map(m => m.ms), [Date.UTC(2026, 9, 5, 10, 37)])
+  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 16, height: 100 })
+  const twelve = Tides.waveMarkViews(wave, layout, CDT, true)
+  assert.deepEqual(twelve.map(v => [v.text, v.type, v.x, v.y]), [["H 5:37 AM", "high", layout.marks[0].x, layout.marks[0].y]])
+  assert.deepEqual(Tides.waveMarkViews(wave, layout, CDT, false).map(v => v.text), ["H 05:37"])
+})
+
+test("every high and low in the visible hours is labelled", () => {
+  const events = [ev(0, "low", 0), ev(6, "high", 2), ev(12, "low", 0), ev(18, "high", 2)]
+  const axis = hoursFrom(1, 20)
+  const wave = Tides.wave(events, axis)
+  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 20, height: 100 })
+  const views = Tides.waveMarkViews(wave, layout, 0, false)
+  assert.deepEqual(views.map(v => v.text), ["H 06:00", "L 12:00", "H 18:00"])
+  assert.deepEqual(views.map(v => v.type), ["high", "low", "high"])
+})
+
+test("no views without a wave or a layout", () => {
+  assert.deepEqual(Tides.waveMarkViews(null, null, 0, false), [])
+  const wave = Tides.wave(SWING, hoursFrom(5, 10))
+  assert.deepEqual(Tides.waveMarkViews(wave, null, 0, false), [])
+  assert.deepEqual(Tides.waveMarkViews(null, { path: [], marks: [] }, 0, false), [])
+})
+
+test("the band takes height only when there is a wave to draw", () => {
+  const wave = Tides.wave(SWING, hoursFrom(5, 10))
+  assert.equal(Tides.waveBandHeight(wave, 16, 64), 80)
+  for (const none of [null, undefined, {}, 5]) assert.equal(Tides.waveBandHeight(none, 16, 64), 0)
+  // No interpolable interval in the visible hours: no wave, so no band.
+  assert.equal(Tides.waveBandHeight(Tides.wave(SWING, hoursFrom(20, 3)), 16, 64), 0)
+  assert.equal(Tides.waveBandHeight(Tides.wave([], hoursFrom(5, 10)), 16, 64), 0)
+  assert.equal(Tides.waveBandHeight(Tides.wave([ev(0, "high", 2), ev(10, "high", 1)], hoursFrom(1, 8)), 16, 64), 0)
+  for (const bad of [[NaN, 64], [16, -1], ["16", 64], [16, undefined]]) assert.equal(Tides.waveBandHeight(wave, bad[0], bad[1]), 0)
+})
+
+test("the chart keeps room above the highs and below the lows for their labels", () => {
+  assert.ok(Tides.WAVE_BAND_TOP >= 0.25 && Tides.WAVE_BAND_BOTTOM <= 0.75 && Tides.WAVE_BAND_BOTTOM > Tides.WAVE_BAND_TOP)
 })

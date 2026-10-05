@@ -436,7 +436,7 @@ function dayTides(info, dateString, zoneOrOffset, useImperial, twelveHour) {
   }
 }
 
-// ---- The tide wave behind the hourly strip ---------------------------------
+// ---- The tide chart under the hourly strip ---------------------------------
 
 // The longest interval between two events that is interpolated. Diurnal
 // stations (one high and one low a day) can have 16 hours or more between a high
@@ -445,9 +445,11 @@ function dayTides(info, dateString, zoneOrOffset, useImperial, twelveHour) {
 var MAX_WAVE_INTERVAL_MS = 26 * 3600000
 var HOUR_MS = 3600000
 var WAVE_SAMPLES_PER_HOUR = 4
-// The wave sits in the lower part of the strip: from 55% to 95% of its height.
-var WAVE_BAND_TOP = 0.55
-var WAVE_BAND_BOTTOM = 0.95
+// The wave has a chart band of its own below the hourly numbers. Within it the
+// curve runs between 32% and 68% of the height, leaving room above the highs and
+// below the lows for their labels.
+var WAVE_BAND_TOP = 0.32
+var WAVE_BAND_BOTTOM = 0.68
 
 // The events with a usable time, in time order. One whose height or type is
 // unusable is kept as a `bad` placeholder rather than dropped, so the curve
@@ -538,7 +540,7 @@ function wave(events, hourMs) {
   var marks = []
   for (var j = 0; j < sorted.length; j++) {
     if (!sorted[j].bad && sorted[j].time >= from && sorted[j].time <= to) {
-      marks.push({ type: sorted[j].type, fi: (sorted[j].time - first) / HOUR_MS, h: sorted[j].height })
+      marks.push({ type: sorted[j].type, fi: (sorted[j].time - first) / HOUR_MS, h: sorted[j].height, ms: sorted[j].time })
     }
   }
   return { fromMs: from, toMs: to, samples: samples, marks: marks }
@@ -579,4 +581,43 @@ function waveLayout(waveData, size) {
     marks.push({ x: xOf(waveData.marks[i].fi), y: yOf(waveData.marks[i].h), type: waveData.marks[i].type })
   }
   return { path: path, marks: marks }
+}
+
+// The small label at the corner of the wave's band, so it is plainly the tide:
+// "TIDE · <station name>", or just "TIDE" when the name is unusable.
+function waveLabel(station) {
+  var name = isObject(station) && typeof station.name === "string" ? station.name.replace(/[\u0000-\u001f\u007f]/g, "").replace(/^\s+|\s+$/g, "") : ""
+  if (name === "") return "TIDE"
+  if (name.length > 40) name = name.slice(0, 39) + "\u2026"
+  return "TIDE \u00b7 " + name
+}
+
+// "H 5:37 AM" or "L 21:34": the event's wall-clock time in the forecast's zone
+// and the chosen clock. Empty when the type, instant or zone is unusable.
+function markLabel(type, ms, zoneOrOffset, twelveHour) {
+  if ((type !== "high" && type !== "low") || typeof ms !== "number" || !isFinite(ms)) return ""
+  var hhmm = Zone.clock(zoneOrOffset, ms)
+  if (hhmm === "") return ""
+  return (type === "high" ? "H " : "L ") + Model.formatClock(hhmm, twelveHour, false)
+}
+
+// A text label for each mark, placed at the mark's pixel position:
+// [{ text, type, x, y }]. Empty without a wave and its layout.
+function waveMarkViews(waveData, layout, zoneOrOffset, twelveHour) {
+  if (!isObject(waveData) || !isObject(layout) || !Array.isArray(waveData.marks) || !Array.isArray(layout.marks)) return []
+  var out = []
+  for (var i = 0; i < waveData.marks.length && i < layout.marks.length; i++) {
+    var text = markLabel(waveData.marks[i].type, waveData.marks[i].ms, zoneOrOffset, twelveHour)
+    if (text !== "") out.push({ text: text, type: waveData.marks[i].type, x: layout.marks[i].x, y: layout.marks[i].y })
+  }
+  return out
+}
+
+// The height the wave's band adds to the hourly strip: its label row plus the
+// chart, only when there is a wave to draw, and nothing otherwise.
+function waveBandHeight(waveData, labelRow, chart) {
+  if (!isObject(waveData) || !Array.isArray(waveData.samples)) return 0
+  if (typeof labelRow !== "number" || !isFinite(labelRow) || labelRow < 0) return 0
+  if (typeof chart !== "number" || !isFinite(chart) || chart <= 0) return 0
+  return labelRow + chart
 }

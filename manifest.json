@@ -123,7 +123,7 @@
         "label": "Tides",
         "options": ["auto", "on", "off"],
         "defaultValue": "auto",
-        "description": "High and low tides in the day card, from NOAA (US coasts) or the Canadian Hydrographic Service. Auto shows them when the nearest tide station is within 100 km of your location. On always uses the nearest station, at any distance. Off never shows them. The card names the station and how far away it is. The wave behind the hourly strip is an approximate interpolation of the predictions, not an authoritative hourly prediction."
+        "description": "High and low tides in the day card, from NOAA (US coasts) or the Canadian Hydrographic Service. Auto shows them when the nearest tide station is within 100 km of your location. On always uses the nearest station, at any distance. Off never shows them. The card names the station and how far away it is. The tide chart under the hourly strip is an approximate interpolation of the predictions, not an authoritative hourly prediction."
       },
       {
         "key": "alertsEnabled",
