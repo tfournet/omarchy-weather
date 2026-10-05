@@ -174,6 +174,15 @@ class TideWiringTests(unittest.TestCase):
         # Still exactly one place that starts a request: the day card's.
         self.assertEqual(PANEL.count("tideProc.running = true"), 1)
 
+    def test_the_docs_call_the_wave_an_approximation(self):
+        readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
+        self.assertIn("approximate", readme)
+        self.assertIn("not an authoritative hourly prediction", readme)
+        self.assertIn("26 hours", readme)
+        self.assertIn("approximate", MANIFEST["barWidget"]["schema"][[e["key"] for e in MANIFEST["barWidget"]["schema"]].index("tides")]["description"])
+        self.assertIn("MAX_WAVE_INTERVAL_MS = 26 * 3600000", TIDES)
+        self.assertNotIn("14 * 3600000", TIDES)
+
     def test_no_place_is_hard_coded(self):
         for source in (TIDES, PANEL, DAY):
             for city in ("San Francisco", "Vancouver", "Seattle", "New York", "Halifax"):

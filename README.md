@@ -101,6 +101,14 @@ station is within 100 km of the forecast location, `on` always uses the nearest
 station at any distance, and `off` never does. With `off`, or `auto` and no
 station in range, nothing is requested, cached or drawn.
 
+The tide wave behind the hourly strip is an approximate interpolation of those
+predictions, not an authoritative hourly prediction: it joins each predicted
+high to the next low with a half-cosine curve, which is a visual approximation
+and can differ materially from the real tide at some stations. It is drawn only
+between a high and a low that are at most 26 hours apart (diurnal stations can
+have 16 hours or more between them); nothing is drawn across two highs or two
+lows, a missing or unusable event, or a longer gap.
+
 ### Open radar
 
 **Open radar** on the forecast launches the saved site in your default

@@ -438,37 +438,50 @@ function dayTides(info, dateString, zoneOrOffset, useImperial, twelveHour) {
 
 // ---- The tide wave behind the hourly strip ---------------------------------
 
-// Real tides give four or five turning points a day, 6 hours or so apart. A
-// longer stretch between consecutive events means data is missing, and drawing
-// a curve across it would invent one.
-var MAX_WAVE_GAP_MS = 14 * 3600000
+// The longest interval between two events that is interpolated. Diurnal
+// stations (one high and one low a day) can have 16 hours or more between a high
+// and the next low, so this is generous; a longer stretch means data is missing
+// and no curve is drawn across it.
+var MAX_WAVE_INTERVAL_MS = 26 * 3600000
 var HOUR_MS = 3600000
 var WAVE_SAMPLES_PER_HOUR = 4
 // The wave sits in the lower part of the strip: from 55% to 95% of its height.
 var WAVE_BAND_TOP = 0.55
 var WAVE_BAND_BOTTOM = 0.95
 
-// The valid events, in time order.
+// The events with a usable time, in time order. One whose height or type is
+// unusable is kept as a `bad` placeholder rather than dropped, so the curve
+// breaks there instead of joining its neighbours across it.
 function sortedEvents(events) {
   if (!Array.isArray(events)) return []
   var out = []
-  for (var i = 0; i < events.length; i++) if (validEvent(events[i])) out.push(events[i])
+  for (var i = 0; i < events.length; i++) {
+    var e = events[i]
+    if (!isObject(e) || !validTime(e.time)) continue
+    out.push(validEvent(e) ? e : { time: e.time, bad: true })
+  }
   return out.sort(function(a, b) { return a.time - b.time })
 }
 
-// Height at ms between consecutive events by half-cosine interpolation,
-//   h(t) = h0 + (h1 - h0) * (1 - cos(pi * (t - t0) / (t1 - t0))) / 2,
-// the standard approximation: exact at each event, monotonic between a high
-// and a low. Null before the first event, after the last, and across a gap of
-// more than MAX_WAVE_GAP_MS.
+// Approximate height at ms between consecutive events by half-cosine
+// interpolation,
+//   h(t) = h0 + (h1 - h0) * (1 - cos(pi * (t - t0) / (t1 - t0))) / 2.
+// This is a visual approximation of the predicted tide, not an authoritative
+// hourly prediction: it is exact at each event and monotonic between a high and
+// a low, but the real curve can differ materially at some stations. It is drawn
+// only between two usable endpoints of opposite type (a high and a low) whose
+// times strictly increase and are at most MAX_WAVE_INTERVAL_MS apart. Null
+// before the first event, after the last, across anything else, and at an
+// unusable event.
 function heightIn(sorted, ms) {
   for (var i = 0; i < sorted.length; i++) {
-    if (sorted[i].time === ms) return sorted[i].height
+    if (sorted[i].time === ms) return sorted[i].bad ? null : sorted[i].height
     if (sorted[i].time > ms) {
       if (i === 0) return null
       var a = sorted[i - 1]
       var b = sorted[i]
-      if (b.time - a.time > MAX_WAVE_GAP_MS) return null
+      if (a.bad || b.bad || a.type === b.type) return null
+      if (!(b.time > a.time) || b.time - a.time > MAX_WAVE_INTERVAL_MS) return null
       return a.height + (b.height - a.height) * (1 - Math.cos(Math.PI * (ms - a.time) / (b.time - a.time))) / 2
     }
   }
@@ -524,7 +537,7 @@ function wave(events, hourMs) {
   if (!drawn) return null
   var marks = []
   for (var j = 0; j < sorted.length; j++) {
-    if (sorted[j].time >= from && sorted[j].time <= to) {
+    if (!sorted[j].bad && sorted[j].time >= from && sorted[j].time <= to) {
       marks.push({ type: sorted[j].type, fi: (sorted[j].time - first) / HOUR_MS, h: sorted[j].height })
     }
   }

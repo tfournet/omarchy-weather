@@ -686,16 +686,83 @@ test("nothing is drawn before the first event or after the last", () => {
   assert.equal(Tides.waveHeight(SWING, "x"), null)
 })
 
-test("a gap of more than 14 hours between events is not bridged", () => {
-  const edge = [ev(0, "high", 2), { time: Date.UTC(2026, 9, 5, 14), type: "low", height: 0 }]
-  assert.equal(Tides.waveHeight(edge, Date.UTC(2026, 9, 5, 7)), 1)
-  const wide = [ev(0, "high", 2), { time: Date.UTC(2026, 9, 5, 14, 0, 0, 1), type: "low", height: 0 }]
-  assert.equal(Tides.waveHeight(wide, Date.UTC(2026, 9, 5, 7)), null)
-  // The stretches either side of a gap still draw.
-  const split = [ev(0, "high", 2), ev(6, "low", 0), ev(23, "high", 2), ev(29, "low", 0)]
+test("the longest interval interpolated is a named 26 hours", () => {
+  assert.equal(Tides.MAX_WAVE_INTERVAL_MS, 26 * 3600000)
+})
+
+test("an interval of exactly 26 hours is drawn, one millisecond more is not", () => {
+  const edge = [ev(0, "high", 2), { time: Date.UTC(2026, 9, 5, 26), type: "low", height: 0 }]
+  assert.equal(Tides.waveHeight(edge, Date.UTC(2026, 9, 5, 13)), 1)
+  const wide = [ev(0, "high", 2), { time: Date.UTC(2026, 9, 5, 26, 0, 0, 1), type: "low", height: 0 }]
+  assert.equal(Tides.waveHeight(wide, Date.UTC(2026, 9, 5, 13)), null)
+  assert.equal(Tides.waveHeight(wide, wide[0].time), 2)
+  assert.equal(Tides.waveHeight(wide, wide[1].time), 0)
+})
+
+test("the stretches either side of a gap over 26 hours still draw", () => {
+  const split = [ev(0, "high", 2), ev(6, "low", 0), ev(33, "high", 2), ev(39, "low", 0)]
   assert.notEqual(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 3)), null)
-  assert.equal(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 15)), null)
-  assert.notEqual(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 26)), null)
+  assert.equal(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 20)), null)
+  assert.notEqual(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 36)), null)
+})
+
+// Weeks Bay, Alabama (NOAA 8765148) is a diurnal station: on 2026-10-05 the high is
+// at 10:37 UTC (05:37 local) and the next low at 02:34 UTC on the 6th (21:34 local),
+// almost 16 hours later. test/fixtures/noaa-8765148-gmt.json is the real response.
+test("a legitimate 16-hour diurnal interval at Weeks Bay is drawn", () => {
+  const events = Tides.PROVIDERS.noaa.parse(fixture("noaa-8765148-gmt.json"))
+  const high = events.find(e => e.time === Date.UTC(2026, 9, 5, 10, 37))
+  const low = events.find(e => e.time === Date.UTC(2026, 9, 6, 2, 34))
+  assert.equal(high.type, "high")
+  assert.equal(low.type, "low")
+  const hours = (low.time - high.time) / HOUR_MS
+  assert.ok(hours > 15.9 && hours < 16, String(hours))
+  const mid = high.time + (low.time - high.time) / 2
+  assert.ok(Math.abs(Tides.waveHeight(events, mid) - (high.height + low.height) / 2) < 1e-9)
+  // The strip's visible daytime hours, 06:00-21:00 local (11:00-02:00Z), have a wave.
+  const axis = Array.from({ length: 16 }, (_, i) => Date.UTC(2026, 9, 5, 11 + i))
+  const wave = Tides.wave(events, axis)
+  assert.notEqual(wave, null)
+  assert.ok(wave.samples.filter(x => x.h !== null).length >= 60)
+  assert.equal(wave.samples.filter(x => x.h === null).length, 0)
+  // The high at 10:37Z is inside the span (which starts at 10:30Z); the low at 02:34Z is just past its end.
+  assert.deepEqual(wave.marks.map(m => m.type), ["high"])
+  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 16, height: 100 })
+  assert.ok(layout.path.every(p => p !== null))
+})
+
+test("events of the same type are never interpolated between", () => {
+  const twoHighs = [ev(0, "high", 2), ev(10, "high", 1.5)]
+  assert.equal(Tides.waveHeight(twoHighs, Date.UTC(2026, 9, 5, 5)), null)
+  const twoLows = [ev(0, "low", 0), ev(10, "low", 0.2)]
+  assert.equal(Tides.waveHeight(twoLows, Date.UTC(2026, 9, 5, 5)), null)
+  // Opposite types either side of the pair still draw.
+  const run = [ev(0, "low", 0), ev(6, "high", 2), ev(12, "high", 1.8), ev(18, "low", 0)]
+  assert.notEqual(Tides.waveHeight(run, Date.UTC(2026, 9, 5, 3)), null)
+  assert.equal(Tides.waveHeight(run, Date.UTC(2026, 9, 5, 9)), null)
+  assert.notEqual(Tides.waveHeight(run, Date.UTC(2026, 9, 5, 15)), null)
+})
+
+test("an event with an unusable height or type breaks the curve instead of being skipped over", () => {
+  for (const bad of [{ type: "low", height: NaN }, { type: "low", height: Infinity }, { type: "low", height: "0" },
+    { type: "low", height: null }, { type: "sideways", height: 0 }]) {
+    const events = [ev(0, "high", 2), Object.assign({ time: Date.UTC(2026, 9, 5, 6) }, bad), ev(12, "low", 0)]
+    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 3)), null, JSON.stringify(bad))
+    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 9)), null, JSON.stringify(bad))
+    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 0)), 2)
+    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 12)), 0)
+  }
+})
+
+test("timestamps must strictly increase between the endpoints", () => {
+  const same = [ev(0, "high", 2), ev(6, "low", 0), { time: Date.UTC(2026, 9, 5, 6), type: "high", height: 2 }, ev(12, "low", 0)]
+  // Two events at 06:00 leave nothing to interpolate across between them.
+  assert.equal(Tides.waveHeight(same, Date.UTC(2026, 9, 5, 9)) !== null, true)
+  assert.equal(Tides.waveHeight([ev(6, "low", 0), ev(6, "high", 2)], Date.UTC(2026, 9, 5, 6, 30)), null)
+  for (const t of [NaN, Infinity, "x", null]) {
+    const events = [ev(0, "high", 2), { time: t, type: "low", height: 0 }, ev(12, "low", 0)]
+    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 6)), 1)
+  }
 })
 
 test("malformed or unsorted events are ignored or put in order", () => {
