@@ -1,64 +1,49 @@
 #!/usr/bin/env python3
-"""Static contracts for the moon-illumination curve behind the ten-day strip."""
+"""The moon-illumination curve behind the ten-day strip was removed (Tim's
+decision). These keep it gone and the strip as it was, with its phase glyphs."""
 
 from pathlib import Path
-import re
 import unittest
 
 
 PLUGIN = Path(__file__).parents[1]
 PANEL = (PLUGIN / "Panel.qml").read_text(encoding="utf-8")
+MOON = (PLUGIN / "Moon.js").read_text(encoding="utf-8")
+README = (PLUGIN / "README.md").read_text(encoding="utf-8")
 
 
-def canvas():
-    return PANEL.split("id: moonCurve", 1)[1].split("\n              }\n", 1)[0]
+def strip():
+    return PANEL.split("id: forecastStrip", 1)[1].split("// ---- HOURLY", 1)[0]
 
 
-class MoonCurveTests(unittest.TestCase):
-    def test_one_canvas_exists_in_the_compact_strip_only(self):
-        self.assertEqual(PANEL.count("id: moonCurve"), 1)
-        strip = PANEL.split("id: forecastStrip", 1)[1].split("// ---- HOURLY", 1)[0]
-        self.assertIn("id: moonCurve", strip)
-        self.assertIn("Canvas {", strip)
+class NoMoonCurveTests(unittest.TestCase):
+    def test_no_curve_canvas_or_series_in_the_panel(self):
+        for gone in ("moonCurve", "moonSeries", "moonStripRow", "illuminationSeries", "curvePoints", "curveSegments"):
+            self.assertNotIn(gone, PANEL)
 
-    def test_it_draws_from_the_pure_functions_and_the_cached_illumination(self):
-        body = canvas()
-        self.assertIn("Moon.curvePoints(", body)
-        self.assertIn("Moon.curveSegments(", body)
-        self.assertIn("bezierCurveTo(", body)
-        self.assertIn("Moon.illuminationSeries(zonedReport,", PANEL)
+    def test_the_pure_curve_functions_are_gone_from_moon_js(self):
+        for gone in ("illuminationSeries", "curvePoints", "curveSegments", "appendRun", "moon curve"):
+            self.assertNotIn(gone, MOON)
 
-    def test_it_sits_behind_the_cells_without_taking_layout_space(self):
-        body = canvas()
-        self.assertNotIn("Layout.", body)
-        self.assertIn("z: -1", body)
-        self.assertIn("anchors.fill: parent", body)
-        # A sibling of the row, in an Item that has the row's height.
-        strip = PANEL.split("id: forecastStrip", 1)[1].split("// ---- HOURLY", 1)[0]
-        item = strip.split("Item {", 1)[1]
-        self.assertLess(item.index("id: moonCurve"), item.index("id: moonStripRow"))
-        self.assertIn("height: root.metricCellHeight + Style.space(64)", item.split("id: moonCurve")[0])
+    def test_the_strip_is_its_plain_row_of_cells_again(self):
+        body = strip()
+        self.assertNotIn("Canvas", body)
+        row = body.split("RowLayout {", 1)[1]
+        self.assertTrue(row.lstrip().startswith("width: parent.width\n              spacing: Style.space(6)\n\n              Repeater {"))
+        self.assertEqual(body.count("RowLayout {"), 1)
+        # No wrapper Item was left behind between the header and the row.
+        header_to_row = body.split("PanelSectionHeader {", 1)[1].split("RowLayout {", 1)[0]
+        self.assertNotIn("Item {", header_to_row)
 
-    def test_it_is_thin_and_faint(self):
-        body = canvas()
-        self.assertRegex(body, r"lineWidth = 1(\.\d)?\b")
-        self.assertRegex(body, r"Util\.alpha\([^)]*, 0\.[1-4]\d?\)")
+    def test_the_phase_glyphs_and_the_card_section_stay(self):
+        self.assertIn("function moonGlyph(date)", PANEL)
+        self.assertIn("root.moonGlyph(modelData.date)", PANEL)
+        for kept in ("function dayInfo(", "function reportDay(", "function glyph(", "function phaseName("):
+            self.assertIn(kept, MOON)
 
-    def test_it_repaints_only_when_its_inputs_change(self):
-        body = canvas()
-        for handler in ("onSeriesChanged", "onStrokeChanged", "onWidthChanged", "onHeightChanged"):
-            self.assertIn(handler + ": requestPaint()", body)
-        for banned in ("Timer", "NumberAnimation", "FrameAnimation", "running", "Behavior", "onPaint: requestPaint"):
-            self.assertNotIn(banned, body)
-        paint = body.split("onPaint:", 1)[1]
-        self.assertNotIn("requestPaint", paint)
-        # Only these four handlers ever ask for a paint.
-        self.assertEqual(len(re.findall(r"requestPaint\(\)", body)), 4)
-
-    def test_the_spacing_matches_the_row_so_points_sit_at_cell_centres(self):
-        strip = PANEL.split("id: forecastStrip", 1)[1].split("// ---- HOURLY", 1)[0]
-        self.assertIn("spacing: Style.space(6)", strip)
-        self.assertIn("Moon.curvePoints(series, width, height, Style.space(6),", canvas())
+    def test_no_readme_mention(self):
+        self.assertNotIn("moon curve", README.lower())
+        self.assertNotIn("illumination curve", README.lower())
 
 
 if __name__ == "__main__":
