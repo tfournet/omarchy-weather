@@ -65,6 +65,14 @@ class ThemeColourTests(unittest.TestCase):
         self.assertIn("themePalette.roles.rainBar", PANEL)
         self.assertIn("rainBarColor", DAY)
 
+    def test_no_curve_canvas_is_left_to_colour_and_the_tide_roles_serve_the_card(self):
+        for gone in ("moonCurve", "tideWaveCanvas", "highColor", "lowColor"):
+            self.assertNotIn(gone, PANEL)
+        # The tide highs and lows are still coloured in the day card, by tone.
+        self.assertIn("tideHigh", (PLUGIN / "Tides.js").read_text(encoding="utf-8"))
+        self.assertIn("tideLow", (PLUGIN / "Tides.js").read_text(encoding="utf-8"))
+        self.assertIn("root.toneColor(modelData.tone)", DAY)
+
     def test_uv_bar_uses_the_band_colour(self):
         self.assertIn("themePalette.roles.uv[", PANEL)
 
