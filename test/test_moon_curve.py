@@ -30,8 +30,14 @@ class MoonCurveTests(unittest.TestCase):
 
     def test_it_sits_behind_the_cells_without_taking_layout_space(self):
         body = canvas()
-        self.assertIn("Layout.ignoreLayout: true", body)
+        self.assertNotIn("Layout.", body)
         self.assertIn("z: -1", body)
+        self.assertIn("anchors.fill: parent", body)
+        # A sibling of the row, in an Item that has the row's height.
+        strip = PANEL.split("id: forecastStrip", 1)[1].split("// ---- HOURLY", 1)[0]
+        item = strip.split("Item {", 1)[1]
+        self.assertLess(item.index("id: moonCurve"), item.index("id: moonStripRow"))
+        self.assertIn("height: root.metricCellHeight + Style.space(64)", item.split("id: moonCurve")[0])
 
     def test_it_is_thin_and_faint(self):
         body = canvas()

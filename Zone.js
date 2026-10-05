@@ -11,12 +11,11 @@
 // the table, `from` and `until` (the epoch ms the table covers) and `fallback`
 // (the report's own offset, used outside that range): `before` is the offset
 // ahead of the first transition, offsets are seconds east of UTC, `utc` is epoch
-// ms, and `key` names it for caches. The table expires: within a year of its end
-// it is not trusted (see tableExpired), so it gets regenerated first.
+// ms, and `key` names it for caches. Outside the table's years a zone answers
+// with the report's own offset.
 .pragma library
 
 var DAY_MS = 86400000
-var YEAR_MS = 365 * DAY_MS
 var MAX_OFFSET = 86400
 var ZONE_NAME = /^[A-Za-z0-9_+\-]+(\/[A-Za-z0-9_+\-]+){0,2}$/
 
@@ -115,23 +114,17 @@ function parseTable(text) {
   return out
 }
 
-// Whether the table is within a year of its end, and so no longer trusted.
-function tableExpired(table, nowMs) {
-  if (!isObject(table)) return false
-  for (var name in table) return nowMs >= table[name].until - YEAR_MS
-  return false
-}
-
 // The zone for a forecast report. The table is used only when it knows the
-// report's `timezone`, has not expired, and agrees with the report's own offset
-// at `nowMs`; the report's own offset covers any date outside the table's
-// years. Otherwise the report's single offset stands. Null if it has none.
+// report's `timezone` and agrees with the report's own offset at `nowMs`. It is
+// trusted for every date inside the years it covers; the report's own offset
+// covers any date outside them. Otherwise the report's single offset stands.
+// Null if the report has none. (A table nearing its end is flagged by the
+// Python staleness test, not here, so it keeps working until it runs out.)
 function forReport(report, table, nowMs) {
   if (!isObject(report) || !validOffset(report.utc_offset_seconds)) return null
   var plain = fixed(report.utc_offset_seconds)
   var name = report.timezone
   if (typeof name !== "string" || !ZONE_NAME.test(name) || !isObject(table) || !table.hasOwnProperty(name)) return plain
-  if (tableExpired(table, nowMs)) return plain
   var source = table[name]
   var zone = {
     before: source.before, transitions: source.transitions, from: source.from, until: source.until,

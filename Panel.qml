@@ -2786,20 +2786,19 @@ KeyboardPanel {
               fontFamily: root.bar.fontFamily
             }
 
-            RowLayout {
+            // The row of day cells, with the moon curve behind it. The canvas is a
+            // sibling of the layout, not a child: a layout would lay it out as a
+            // cell, and Qt 6 offers no way to opt a child out.
+            Item {
               width: parent.width
-              spacing: Style.space(6)
+              height: root.metricCellHeight + Style.space(64)
 
               // The moon's illumination, one point per day at the cell centre,
               // behind the cells. Repaints only when its inputs change.
               Canvas {
                 id: moonCurve
-                Layout.ignoreLayout: true
                 z: -1
-                x: 0
-                y: 0
-                width: parent.width
-                height: parent.height
+                anchors.fill: parent
                 property var series: root.moonSeries
                 property color stroke: Util.alpha(Color.accent, 0.35)
 
@@ -2828,6 +2827,11 @@ KeyboardPanel {
                   ctx.stroke()
                 }
               }
+
+              RowLayout {
+                id: moonStripRow
+                width: parent.width
+                spacing: Style.space(6)
 
               Repeater {
                 model: root.daily
@@ -2919,6 +2923,7 @@ KeyboardPanel {
                     }
                   }
                 }
+              }
               }
             }
           }

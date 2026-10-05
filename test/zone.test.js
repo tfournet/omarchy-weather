@@ -155,17 +155,34 @@ test("a date outside the range is a plain day in the response's offset", () => {
   assert.equal(Zone.midnight(zone, `${to + 1}-07-01`), Date.UTC(to + 1, 6, 1, 4))
 })
 
-test("the table is not trusted within a year of its end, so it gets regenerated", () => {
+test("at runtime the table is trusted for every date inside its covered range, even in its last year", () => {
   const { to } = range()
   const endsAt = Date.UTC(to + 1, 0, 1)
-  const key = now => Zone.forReport({ timezone: "America/New_York", utc_offset_seconds: -18000 }, table(), now)
-  const trusted = now => Zone.offsetAt(key(now), Date.UTC(to - 1, 6, 1)) === -14400
-  assert.equal(trusted(endsAt - 366 * 86400000 - 1), true)
-  assert.equal(trusted(endsAt - 365 * 86400000), false)
-  assert.equal(trusted(endsAt - 86400000), false)
-  assert.equal(trusted(endsAt + 86400000), false)
-  assert.equal(Zone.tableExpired(table(), endsAt - 366 * 86400000 - 1), false)
-  assert.equal(Zone.tableExpired(table(), endsAt - 365 * 86400000), true)
+  // A forecast fetched in the final summer (EDT), looking at dates after the clocks go back.
+  for (const now of [Date.UTC(to, 0, 15), Date.UTC(to, 6, 1), endsAt - 400 * 86400000, endsAt - 200 * 86400000, endsAt - 86400000]) {
+    const base = Zone.offsetAt(newYorkAt(now), now)
+    const zone = Zone.forReport({ timezone: "America/New_York", utc_offset_seconds: base }, table(), now)
+    assert.equal(Zone.offsetAt(zone, Date.UTC(to, 6, 1)), -14400, `summer, now ${new Date(now).toISOString()}`)
+    assert.equal(Zone.offsetAt(zone, Date.UTC(to, 10, 15)), -18000, `after the change, now ${new Date(now).toISOString()}`)
+    assert.equal(Zone.midnight(zone, `${to}-11-15`), Date.UTC(to, 10, 15, 5))
+  }
+})
+
+// What New York's offset is at a given instant in the table's covered years.
+function newYorkAt(now) {
+  return table()["America/New_York"]
+}
+
+test("outside the covered range the report's own offset is used, however the table ends", () => {
+  const { to } = range()
+  const zone = Zone.forReport({ timezone: "America/New_York", utc_offset_seconds: -14400 }, table(), Date.UTC(to, 6, 1))
+  assert.equal(Zone.offsetAt(zone, Date.UTC(to + 1, 0, 15)), -14400)
+  assert.equal(Zone.offsetAt(zone, Date.UTC(to + 1, 10, 15)), -14400)
+  assert.equal(Zone.offsetAt(zone, Date.UTC(to, 11, 31, 23, 59)), -18000)
+})
+
+test("the early-warning expiry is not part of the runtime code", () => {
+  assert.equal(Zone.tableExpired, undefined)
 })
 
 test("a table whose range is missing is not used at all", () => {
