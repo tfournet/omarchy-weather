@@ -387,33 +387,22 @@ test("great-circle distance is right on known pairs", () => {
 
 test("the nearest real station is found for places on both providers' coasts", () => {
   const stations = realIndex()
-  const sf = Tides.nearestStation(stations, 37.7749, -122.4194, 40, "")
+  const sf = Tides.nearestStation(stations, 37.7749, -122.4194, 40)
   assert.equal(sf.station.provider, "noaa")
   assert.ok(sf.km < 15)
-  const vancouver = Tides.nearestStation(stations, 49.2827, -123.1207, 40, "")
+  const vancouver = Tides.nearestStation(stations, 49.2827, -123.1207, 40)
   assert.equal(vancouver.station.provider, "dfo")
   assert.ok(vancouver.km < 10, "km " + vancouver.km)
-  const honolulu = Tides.nearestStation(stations, 21.3069, -157.8583, 40, "")
-  assert.equal(honolulu.station.provider, "noaa")
-  const victoria = Tides.nearestStation(stations, 48.4284, -123.3656, 40, "")
-  assert.equal(victoria.station.provider, "dfo")
+  assert.equal(Tides.nearestStation(stations, 21.3069, -157.8583, 40).station.provider, "noaa")
+  assert.equal(Tides.nearestStation(stations, 48.4284, -123.3656, 40).station.provider, "dfo")
 })
 
 test("places with no station in range have none, including far from any coast", () => {
   const stations = realIndex()
   for (const [name, lat, lon] of [["Sydney", -33.8688, 151.2093], ["Longyearbyen", 78.2232, 15.6267],
     ["Denver", 39.7392, -104.9903], ["mid-Pacific", 0, -140], ["South Pole", -90, 0], ["north pole", 90, 0]]) {
-    assert.equal(Tides.nearestStation(stations, lat, lon, 40, ""), null, name)
+    assert.equal(Tides.nearestStation(stations, lat, lon, Tides.AUTO_MAX_KM), null, name)
   }
-})
-
-test("the range is a hard limit and is configurable", () => {
-  const stations = [SF]
-  const at = { lat: 37.806, lon: -122.465 + 0.5 } // about 44 km east
-  assert.equal(Tides.nearestStation(stations, at.lat, at.lon, 40, ""), null)
-  const wider = Tides.nearestStation(stations, at.lat, at.lon, 50, "")
-  assert.equal(wider.station.id, "9414290")
-  assert.ok(wider.km > 40 && wider.km < 50)
 })
 
 test("the nearest of several wins, across the antimeridian too", () => {
@@ -422,65 +411,98 @@ test("the nearest of several wins, across the antimeridian too", () => {
     { provider: "noaa", id: "2", name: "near", lat: 0, lon: 179.9 },
     { provider: "dfo", id: "3".repeat(24), name: "mid", lat: 0, lon: 175 }
   ]
-  assert.equal(Tides.nearestStation(stations, 0, -179.95, 40, "").station.id, "2")
-})
-
-test("an override names a station exactly, whatever the distance", () => {
-  const stations = realIndex()
-  const far = Tides.nearestStation(stations, 40.7128, -74.006, 40, "noaa:9414290")
-  assert.equal(far.station.id, "9414290")
-  assert.ok(far.km > 3000)
-  const dfo = Tides.nearestStation(stations, 40.7128, -74.006, 40, "dfo:5cebf1de3d0f4a073c4bb943")
-  assert.equal(dfo.station.name, "Vancouver")
-})
-
-test("an override that names no station in the index gives no station, not a substitute", () => {
-  const stations = realIndex()
-  assert.equal(Tides.nearestStation(stations, 37.77, -122.42, 40, "noaa:0000000"), null)
-  assert.equal(Tides.nearestStation(stations, 37.77, -122.42, 40, "dfo:9414290"), null)
-})
-
-test("a malformed override is ignored and the nearest station is used", () => {
-  const stations = realIndex()
-  for (const junk of ["", "   ", "9414290", "noaa:", ":9414290", "tides:9414290", "noaa:9414290:x", null, undefined, 5]) {
-    const found = Tides.nearestStation(stations, 37.7749, -122.4194, 40, junk)
-    assert.equal(found && found.station.provider, "noaa", String(junk))
-  }
-})
-
-test("the settings view accepts only blank or provider:id as an override", () => {
-  assert.deepEqual(Tides.parseOverride("noaa:9414290"), { provider: "noaa", id: "9414290" })
-  assert.deepEqual(Tides.parseOverride("  dfo:5cebf1de3d0f4a073c4bb943 "), { provider: "dfo", id: "5cebf1de3d0f4a073c4bb943" })
-  for (const bad of ["", "noaa", "noaa:", "x:1", "noaa:1:2", "noaa:a b", null, 5]) assert.equal(Tides.parseOverride(bad), null, String(bad))
+  assert.equal(Tides.nearestStation(stations, 0, -179.95, 40).station.id, "2")
 })
 
 test("bad coordinates or range give no station", () => {
   const stations = [SF]
   for (const [lat, lon, km] of [[NaN, 0, 40], [91, 0, 40], [0, 181, 40], ["37", -122, 40], [null, 0, 40], [37.8, -122.4, NaN],
     [37.8, -122.4, -1], [37.8, -122.4, "40"]]) {
-    assert.equal(Tides.nearestStation(stations, lat, lon, km, ""), null, JSON.stringify([lat, lon, km]))
+    assert.equal(Tides.nearestStation(stations, lat, lon, km), null, JSON.stringify([lat, lon, km]))
   }
-  assert.equal(Tides.nearestStation(null, 37.8, -122.4, 40, ""), null)
-  assert.equal(Tides.nearestStation([], 37.8, -122.4, 40, ""), null)
+  assert.equal(Tides.nearestStation(null, 37.8, -122.4, 40), null)
+  assert.equal(Tides.nearestStation([], 37.8, -122.4, 40), null)
 })
 
-test("the choice is cached per place, including no station", () => {
+// ---- the one `tides` setting: auto, on, off ----------------------------------
+
+// A place whose nearest station (SF, 37.806 -122.465) is the given distance due north.
+const northOfSf = km => ({ lat: 37.806 + km / 111.195, lon: -122.465 })
+
+test("the auto threshold is a named constant of 100 km, not a setting", () => {
+  assert.equal(Tides.AUTO_MAX_KM, 100)
+})
+
+test("the setting has three values and anything else means auto", () => {
+  for (const v of ["auto", "on", "off"]) assert.equal(Tides.normalizeMode(v), v)
+  for (const bad of [undefined, null, "", "ON", "true", true, false, 1, {}, [], "auto "]) assert.equal(Tides.normalizeMode(bad), "auto", String(bad))
+})
+
+test("auto: a station just inside 100 km shows, just outside shows nothing", () => {
+  const stations = [SF]
+  const inside = northOfSf(99.5)
+  const outside = northOfSf(100.5)
+  assert.ok(Math.abs(Tides.distanceKm(inside.lat, inside.lon, SF.lat, SF.lon) - 99.5) < 0.05)
+  assert.ok(Math.abs(Tides.distanceKm(outside.lat, outside.lon, SF.lat, SF.lon) - 100.5) < 0.05)
+  const found = Tides.stationFor(stations, inside.lat, inside.lon, "auto")
+  assert.equal(found.station.id, "9414290")
+  assert.ok(found.km < 100)
+  assert.equal(Tides.stationFor(stations, outside.lat, outside.lon, "auto"), null)
+})
+
+test("auto: exactly 100 km is still in range, and the default is auto", () => {
+  const exactly = northOfSf(100)
+  const km = Tides.distanceKm(exactly.lat, exactly.lon, SF.lat, SF.lon)
+  assert.equal(Tides.stationFor([SF], exactly.lat, exactly.lon, "auto") !== null, km <= 100)
+  assert.ok(Tides.stationFor([SF], 37.8, -122.4, undefined) !== null)
+  assert.equal(Tides.stationFor([SF], -33.9, 151.2, undefined), null)
+})
+
+test("on: the nearest station at any distance", () => {
+  const stations = realIndex()
+  const sydney = Tides.stationFor(stations, -33.8688, 151.2093, "on")
+  assert.ok(sydney !== null && sydney.km > 1000)
+  const outside = northOfSf(250)
+  assert.equal(Tides.stationFor([SF], outside.lat, outside.lon, "auto"), null)
+  assert.equal(Tides.stationFor([SF], outside.lat, outside.lon, "on").station.id, "9414290")
+  const antipode = Tides.stationFor([SF], -37.8, 57.5, "on")
+  assert.ok(antipode.km > 19000)
+})
+
+test("on with no station in the index at all is still nothing", () => {
+  assert.equal(Tides.stationFor([], 37.8, -122.4, "on"), null)
+  assert.equal(Tides.stationFor(null, 37.8, -122.4, "on"), null)
+})
+
+test("off: never a station, however close", () => {
+  assert.equal(Tides.stationFor([SF], SF.lat, SF.lon, "off"), null)
+  assert.equal(Tides.stationFor(realIndex(), 37.7749, -122.4194, "off"), null)
+})
+
+test("bad coordinates give no station in any mode", () => {
+  for (const mode of ["auto", "on", "off"]) {
+    for (const [lat, lon] of [[NaN, 0], [91, 0], [0, 181], ["37", -122], [null, 0], [undefined, undefined]]) {
+      assert.equal(Tides.stationFor([SF], lat, lon, mode), null, mode + JSON.stringify([lat, lon]))
+    }
+  }
+})
+
+test("the choice is cached per place and mode, including no station", () => {
   const stations = [SF]
   const before = Tides.choiceCacheSize()
-  const first = Tides.chooseStation(stations, 37.8, -122.4, 40, "")
-  const again = Tides.chooseStation(stations, 37.8, -122.4, 40, "")
-  assert.equal(first, again)
+  const first = Tides.stationFor(stations, 37.71, -122.31, "auto")
+  assert.equal(first, Tides.stationFor(stations, 37.71, -122.31, "auto"))
   assert.equal(Tides.choiceCacheSize(), before + 1)
-  assert.equal(Tides.chooseStation(stations, -33.9, 151.2, 40, ""), null)
-  assert.equal(Tides.chooseStation(stations, -33.9, 151.2, 40, ""), null)
+  assert.equal(Tides.stationFor(stations, -33.91, 151.21, "auto"), null)
+  assert.equal(Tides.stationFor(stations, -33.91, 151.21, "auto"), null)
   assert.equal(Tides.choiceCacheSize(), before + 2)
-  // A different range or override is a different question.
-  Tides.chooseStation(stations, 37.8, -122.4, 10, "")
+  // The same place under another mode is another question.
+  Tides.stationFor(stations, -33.91, 151.21, "on")
   assert.equal(Tides.choiceCacheSize(), before + 3)
 })
 
 test("the choice cache stays bounded", () => {
-  for (let i = 0; i < 400; i++) Tides.chooseStation([SF], 10 + i / 100, 20, 40, "")
+  for (let i = 0; i < 400; i++) Tides.stationFor([SF], 10 + i / 100, 20, "auto")
   assert.ok(Tides.choiceCacheSize() <= 128)
 })
 

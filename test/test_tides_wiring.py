@@ -19,54 +19,66 @@ def block(source, start, end):
 
 
 class TideWiringTests(unittest.TestCase):
-    def test_settings_have_schema_entries_and_defaults(self):
+    def test_one_tides_setting_with_three_values(self):
         defaults = MANIFEST["barWidget"]["defaults"]
-        self.assertIs(defaults["tidesEnabled"], True)
-        self.assertEqual(defaults["tideMaxDistanceKm"], 40)
-        self.assertEqual(defaults["tideStation"], "")
+        self.assertEqual(defaults["tides"], "auto")
         schema = {entry["key"]: entry for entry in MANIFEST["barWidget"]["schema"]}
-        self.assertEqual(schema["tidesEnabled"]["type"], "boolean")
-        self.assertIs(schema["tidesEnabled"]["defaultValue"], True)
-        self.assertEqual(schema["tideMaxDistanceKm"]["type"], "integer")
-        self.assertEqual(schema["tideMaxDistanceKm"]["defaultValue"], 40)
-        self.assertEqual(schema["tideStation"]["type"], "string")
-        self.assertEqual(schema["tideStation"]["defaultValue"], "")
+        self.assertEqual(schema["tides"]["type"], "enum")
+        self.assertEqual(schema["tides"]["options"], ["auto", "on", "off"])
+        self.assertEqual(schema["tides"]["defaultValue"], "auto")
+        self.assertIn("100", schema["tides"]["description"])
 
-    def test_the_panels_own_settings_view_has_the_three_controls(self):
+    def test_the_old_tide_settings_are_gone_everywhere(self):
+        for key in ("tidesEnabled", "tideMaxDistanceKm", "tideStation", "tideMaxKm", "tideOverride",
+                    "tideRanges", "saveTideStation", "parseOverride", "chooseStation"):
+            for name, source in (("manifest", json.dumps(MANIFEST)), ("Panel", PANEL), ("Tides", TIDES),
+                                 ("README", (PLUGIN / "README.md").read_text(encoding="utf-8"))):
+                self.assertIsNone(re.search(r"\b" + key + r"\b", source), name + " still mentions " + key)
+
+    def test_the_threshold_is_a_named_constant_not_a_setting(self):
+        self.assertIn("var AUTO_MAX_KM = 100", TIDES)
+        self.assertNotIn("100", PANEL.split("tidesMode")[1].split("function ensureTides()")[0].replace("tide-stations", ""))
+
+    def test_the_panels_own_settings_view_uses_its_choice_control(self):
         settings = PANEL.split("id: settingsColumn")[1]
+        section = block(settings, 'text: "TIDES"', 'text: "ALERTS"')
         for contract in (
-            'text: "TIDES"',
-            'persistSetting("tidesEnabled", !root.tidesEnabled)',
-            'persistSetting("tideMaxDistanceKm", modelData)',
-            "model: root.tideRanges",
-            "id: tideStationField",
-            "root.saveTideStation(tideStationField.text)",
+            '{ id: "auto", label: "Auto" }',
+            '{ id: "on", label: "On" }',
+            '{ id: "off", label: "Off" }',
+            'root.tidesMode === modelData.id',
+            'root.persistSetting("tides", modelData.id)',
+            "Rectangle {",
+            "MouseArea {",
         ):
-            self.assertIn(contract, settings)
-        # An override is saved only when it is blank or provider:id.
-        save = block(PANEL, "function saveTideStation(text)", "\n  }\n")
-        self.assertIn("Tides.parseOverride(", save)
-        self.assertIn('persistSetting("tideStation"', save)
-        # The section sits before the alerts section, with the other settings.
+            self.assertIn(contract, section)
+        self.assertNotIn("TextField", section)
+        self.assertNotIn("ToggleSwitch", section)
+        # It explains what auto does, with the distance, so the choice is informed.
+        self.assertIn("100 km", section)
         self.assertLess(settings.index('text: "TIDES"'), settings.index('text: "ALERTS"'))
 
-    def test_panel_reads_the_settings(self):
+    def test_panel_reads_the_one_setting(self):
         for contract in (
-            'setting("tidesEnabled", true) !== false',
-            'setting("tideMaxDistanceKm", 40)',
-            'setting("tideStation", "")',
-            "Tides.chooseStation(",
+            'Tides.normalizeMode(setting("tides", "auto"))',
+            "Tides.stationFor(",
         ):
             self.assertIn(contract, PANEL)
 
-    def test_nothing_is_read_or_fetched_when_tides_are_off(self):
+    def test_the_card_names_the_station_and_distance(self):
+        self.assertIn("root.card.tides.station", DAY)
+
+    def test_nothing_is_read_or_fetched_when_off_or_out_of_range(self):
         index = block(PANEL, "id: tideIndexFile", "}\n")
         cache = block(PANEL, "id: tideCacheFile", "}\n")
-        self.assertIn("root.tidesEnabled ?", index)
-        self.assertIn("root.tidesEnabled ?", cache)
+        # The station index is only needed to look a station up, so not when off.
+        self.assertIn('root.tidesMode !== "off" ?', index)
+        # The cache is only read once there is a station to show.
+        self.assertIn("root.tideChoice ?", cache)
         ensure = block(PANEL, "function ensureTides()", "\n  }\n")
-        self.assertIn("!tidesEnabled", ensure)
         self.assertIn("!tideChoice", ensure)
+        # No station means no tide UI: the card gets no tide info.
+        self.assertIn("readonly property var tideInfo: tideChoice", PANEL)
 
     def test_fetch_only_for_an_open_day_card(self):
         ensure = block(PANEL, "function ensureTides()", "\n  }\n")

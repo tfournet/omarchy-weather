@@ -221,50 +221,45 @@ function distanceKm(lat1, lon1, lat2, lon2) {
   return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
 }
 
-// "provider:id" or null. Anything else (blank, wrong shape, another provider)
-// counts as no override at all.
-function parseOverride(text) {
-  var m = /^(noaa|dfo):([A-Za-z0-9]+)$/.exec(typeof text === "string" ? text.replace(/^\s+|\s+$/g, "") : "")
-  return m ? { provider: m[1], id: m[2] } : null
+// The one `tides` setting. In auto a station shows only when it is within
+// AUTO_MAX_KM of the forecast location; on uses the nearest at any distance;
+// off never shows one. Not a setting itself: Tim chose 100 km.
+var AUTO_MAX_KM = 100
+var MODES = ["auto", "on", "off"]
+
+// The setting's value, or "auto" for anything that is not one of the three.
+function normalizeMode(value) {
+  return typeof value === "string" && MODES.indexOf(value) >= 0 ? value : "auto"
 }
 
-// The station to use for a place: { station, km } or null. An override names a
-// station exactly and ignores the range; one the index does not hold gives
-// null rather than some other station.
-function nearestStation(stations, lat, lon, maxKm, override) {
+// The station nearest a place within maxKm (Infinity for no limit):
+// { station, km } or null.
+function nearestStation(stations, lat, lon, maxKm) {
   if (!Array.isArray(stations) || !validPlace(lat, lon)) return null
-  var named = parseOverride(override)
+  if (typeof maxKm !== "number" || isNaN(maxKm) || maxKm < 0) return null
   var best = null
   var bestKm = Infinity
-
-  if (named) {
-    for (var i = 0; i < stations.length; i++) {
-      var s = stations[i]
-      if (s.provider === named.provider && s.id === named.id) {
-        return { station: s, km: distanceKm(lat, lon, s.lat, s.lon) }
-      }
-    }
-    return null
-  }
-
-  if (typeof maxKm !== "number" || !isFinite(maxKm) || maxKm < 0) return null
-  for (var j = 0; j < stations.length; j++) {
-    var km = distanceKm(lat, lon, stations[j].lat, stations[j].lon)
+  for (var i = 0; i < stations.length; i++) {
+    var km = distanceKm(lat, lon, stations[i].lat, stations[i].lon)
     if (km < bestKm) {
-      best = stations[j]
+      best = stations[i]
       bestKm = km
     }
   }
   return best !== null && bestKm <= maxKm ? { station: best, km: bestKm } : null
 }
 
-// nearestStation, remembered per place, range and override, so a location
-// change is looked up once and "no station" is remembered too.
-function chooseStation(stations, lat, lon, maxKm, override) {
+// The station to show for a place under the `tides` setting, or null (off, no
+// station in range in auto, or none in the index). Remembered per place and
+// mode, so a location change is looked up once and "no station" is remembered
+// too. The lookup is local and cheap, so auto runs it for every place.
+function stationFor(stations, lat, lon, mode) {
   if (!Array.isArray(stations) || !validPlace(lat, lon)) return null
-  var key = lat.toFixed(3) + "|" + lon.toFixed(3) + "|" + maxKm + "|" + override + "|" + stations.length
+  var m = normalizeMode(mode)
+  if (m === "off") return null
+  var key = lat.toFixed(3) + "|" + lon.toFixed(3) + "|" + m + "|" + stations.length
   if (choiceCache.hasOwnProperty(key)) return choiceCache[key]
-  var found = nearestStation(stations, lat, lon, maxKm, override)
+  var found = nearestStation(stations, lat, lon, m === "on" ? Infinity : AUTO_MAX_KM)
   if (choiceCount >= CHOICE_LIMIT) {
     choiceCache = {}
     choiceCount = 0
