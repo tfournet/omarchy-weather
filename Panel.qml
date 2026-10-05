@@ -380,29 +380,34 @@ Panel {
     ? { station: tideChoice.station, distanceKm: tideChoice.km, events: Tides.eventsFor(tideCache, tideKey) }
     : null
 
-  // The tide chart under the hourly strip: the cached high/low events for the
-  // station the card uses, over the hours shown. Null (and no work) when tides
-  // are inactive, no events are cached or no interval in the visible hours can
-  // be interpolated; it never starts a request itself. When it is null there is
-  // no band, no label and no extra height.
-  readonly property var tideWave: tideInfo && tideInfo.events && tideInfo.events.length > 0
-    ? Tides.wave(tideInfo.events, Tides.hourEpochs(dailyForecastReport, hourly))
-    : null
-  readonly property real tideLabelRow: Style.space(16)
-  readonly property real tideChartHeight: Style.space(64)
-  readonly property real tideBandHeight: Tides.waveBandHeight(tideWave, tideLabelRow, tideChartHeight)
-  readonly property var tideLayout: tideWave
-    ? Tides.waveLayout(tideWave, { cell: hourlyStrip.fittedCellWidth, gap: hourlyStrip.cellGap, count: hourly.length, height: tideChartHeight })
-    : null
-  readonly property var tideMarkViews: Tides.waveMarkViews(tideWave, tideLayout, Zone.of(zonedReport), use12Hour)
-  readonly property string tideLabelText: tideInfo ? Tides.waveLabel(tideInfo.station) : "TIDE"
+  // One line of text below the hourly cards: the station, rising or falling,
+  // and the next high or low (Tides.nextLine). It comes from the cached events
+  // for the station the card uses and never starts a request itself. Empty, and
+  // so taking no space, when tides are inactive, no events are cached, or none
+  // lies after now. `tideNow` moves on once a minute while the panel is open
+  // with a station, so the line follows the tide without any other work.
+  property real tideNow: Date.now()
+  readonly property string tideLine: tideInfo
+    ? Tides.nextLine(tideInfo.station, tideInfo.events, tideNow, Zone.of(zonedReport), useImperial, use12Hour)
+    : ""
+
+  Timer {
+    id: tideNowTimer
+    interval: 60000
+    repeat: true
+    running: root.opened && root.tideChoice !== null
+    onTriggered: root.tideNow = Date.now()
+  }
 
   onTideKeyChanged: ensureTides()
-  onOpenedChanged: ensureTides()
+  onOpenedChanged: {
+    tideNow = Date.now()
+    ensureTides()
+  }
   onMainViewChanged: ensureTides()
 
   // Fetch when the panel is open on the forecast view (the hourly strip draws
-  // the wave from these events), for the station the `tides` setting picks, at
+  // the line under the hourly cards), for the station the `tides` setting picks, at
   // most once a day. No station (off, or auto and out of range) means no key and
   // no request. Tides.wantsFetch holds the whole decision.
   function ensureTides() {
@@ -3053,89 +3058,12 @@ KeyboardPanel {
                 return Math.max(Style.space(52), available / count)
               }
               width: parent.width
-              height: hourRow.implicitHeight + root.tideBandHeight
+              height: hourRow.implicitHeight
               contentWidth: hourRow.implicitWidth
-              contentHeight: hourRow.implicitHeight + root.tideBandHeight
+              contentHeight: hourRow.implicitHeight
               clip: true
               boundsBehavior: Flickable.StopAtBounds
               interactive: hourRow.implicitWidth > width + 0.5
-
-              // The tide chart: a band of its own below the hourly numbers, with a
-              // label naming the station, the curve, and a text label at each high
-              // and low. Present only when a wave can be drawn. The canvas
-              // repaints only when its layout, colour or size change.
-              Text {
-                visible: root.tideWave !== null
-                textFormat: Text.PlainText
-                x: hourlyStrip.edgeInset + hourlyStrip.cellGap
-                y: hourRow.height + Style.space(2)
-                text: root.tideLabelText
-                color: root.dimText
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-
-              Canvas {
-                id: tideWaveCanvas
-                visible: root.tideWave !== null
-                x: hourlyStrip.edgeInset + hourlyStrip.cellGap
-                y: hourRow.height + root.tideLabelRow
-                width: root.hourly.length * hourlyStrip.fittedCellWidth + Math.max(0, root.hourly.length - 1) * hourlyStrip.cellGap
-                height: root.tideChartHeight
-                property var layout: root.tideLayout
-                property color stroke: Util.alpha(Color.accent, 0.7)
-
-                onLayoutChanged: requestPaint()
-                onStrokeChanged: requestPaint()
-                onWidthChanged: requestPaint()
-                onHeightChanged: requestPaint()
-
-                onPaint: {
-                  var ctx = getContext("2d")
-                  ctx.clearRect(0, 0, width, height)
-                  if (!layout) return
-                  ctx.strokeStyle = stroke.toString()
-                  ctx.lineWidth = 1.5
-                  ctx.lineJoin = "round"
-                  ctx.beginPath()
-                  var pen = false
-                  for (var i = 0; i < layout.path.length; i++) {
-                    var p = layout.path[i]
-                    if (p === null) {
-                      pen = false
-                    } else if (pen) {
-                      ctx.lineTo(p.x, p.y)
-                    } else {
-                      ctx.moveTo(p.x, p.y)
-                      pen = true
-                    }
-                  }
-                  ctx.stroke()
-                  ctx.fillStyle = stroke.toString()
-                  for (var j = 0; j < layout.marks.length; j++) {
-                    ctx.beginPath()
-                    ctx.arc(layout.marks[j].x, layout.marks[j].y, 3.5, 0, 2 * Math.PI)
-                    if (layout.marks[j].type === "high") ctx.fill()
-                    else ctx.stroke()
-                  }
-                }
-              }
-
-              Repeater {
-                model: root.tideMarkViews
-
-                Text {
-                  required property var modelData
-                  textFormat: Text.PlainText
-                  text: modelData.text
-                  color: root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.caption
-                  // Above a high and below a low, kept inside the strip's width.
-                  x: Math.max(0, Math.min(hourlyStrip.contentWidth - width, tideWaveCanvas.x + modelData.x - width / 2))
-                  y: tideWaveCanvas.y + (modelData.type === "high" ? modelData.y - height - Style.space(4) : modelData.y + Style.space(4))
-                }
-              }
 
               Row {
                 id: hourRow
@@ -3223,6 +3151,18 @@ KeyboardPanel {
 
                 Item { width: hourlyStrip.edgeInset; height: 1 }
               }
+            }
+
+            // The next high or low, as one line. Hidden (and so no height) when empty.
+            Text {
+              visible: text !== ""
+              textFormat: Text.PlainText
+              width: parent.width
+              elide: Text.ElideRight
+              text: root.tideLine
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
             }
           }
 

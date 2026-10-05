@@ -339,7 +339,7 @@ function withEntry(cache, key, events, nowMs) {
 }
 
 // Whether to start a tide request now: the panel is open on the forecast view
-// (the hourly strip shows the wave, so no day card is needed), there is a
+// (the line under the hourly cards needs these events, so no day card is needed), there is a
 // station to show (an empty key means tides are off or out of range, and then
 // nothing is requested), the cache file has been read, no request is running or
 // backing off, and the station's entry is missing or a day old.
@@ -436,188 +436,51 @@ function dayTides(info, dateString, zoneOrOffset, useImperial, twelveHour) {
   }
 }
 
-// ---- The tide chart under the hourly strip ---------------------------------
+// ---- The line of text below the hourly cards ----------------------------------
 
-// The longest interval between two events that is interpolated. Diurnal
-// stations (one high and one low a day) can have 16 hours or more between a high
-// and the next low, so this is generous; a longer stretch means data is missing
-// and no curve is drawn across it.
-var MAX_WAVE_INTERVAL_MS = 26 * 3600000
-var HOUR_MS = 3600000
-var WAVE_SAMPLES_PER_HOUR = 4
-// The wave has a chart band of its own below the hourly numbers. Within it the
-// curve runs between 32% and 68% of the height, leaving room above the highs and
-// below the lows for their labels.
-var WAVE_BAND_TOP = 0.32
-var WAVE_BAND_BOTTOM = 0.68
+var SHORT_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
 
-// The events with a usable time, in time order. One whose height or type is
-// unusable is kept as a `bad` placeholder rather than dropped, so the curve
-// breaks there instead of joining its neighbours across it.
-function sortedEvents(events) {
-  if (!Array.isArray(events)) return []
-  var out = []
+// A station's name as one clean line: control characters dropped, trimmed, and
+// cut at 40 characters. Empty when it is not usable text.
+function cleanName(station) {
+  var name = isObject(station) && typeof station.name === "string"
+    ? station.name.replace(/[\u0000-\u001f\u007f]/g, "").replace(/^\s+|\s+$/g, "") : ""
+  return name.length > 40 ? name.slice(0, 39) + "\u2026" : name
+}
+
+// "yyyy-mm-dd" of an instant on the zone's wall clock.
+function localDate(zone, ms) {
+  var d = new Date(ms + Zone.offsetAt(zone, ms) * 1000)
+  return d.getUTCFullYear() + "-" + Model.pad2(d.getUTCMonth() + 1) + "-" + Model.pad2(d.getUTCDate())
+}
+
+// The one caption line: the station, whether the tide is rising or falling, and
+// the next high or low,
+//   TIDE · Weeks Bay · Falling · Low 9:34 PM (0.0 ft)
+// The next event is the earliest usable one strictly after nowMs. Its time is on
+// the zone's wall clock and the chosen clock, with the short weekday in front
+// when it is not today there; its height is in feet or metres, one decimal.
+// Rising means the next event is a high. Empty when there is no such event or
+// any input is unusable. Pure: nothing here draws or fetches.
+function nextLine(station, events, nowMs, zoneOrOffset, useImperial, twelveHour) {
+  if (typeof nowMs !== "number" || !isFinite(nowMs) || !Array.isArray(events)) return ""
+  var zone = Zone.normalize(zoneOrOffset)
+  if (zone === null) return ""
+  var next = null
   for (var i = 0; i < events.length; i++) {
-    var e = events[i]
-    if (!isObject(e) || !validTime(e.time)) continue
-    out.push(validEvent(e) ? e : { time: e.time, bad: true })
+    if (validEvent(events[i]) && events[i].time > nowMs && (next === null || events[i].time < next.time)) next = events[i]
   }
-  return out.sort(function(a, b) { return a.time - b.time })
-}
-
-// Approximate height at ms between consecutive events by half-cosine
-// interpolation,
-//   h(t) = h0 + (h1 - h0) * (1 - cos(pi * (t - t0) / (t1 - t0))) / 2.
-// This is a visual approximation of the predicted tide, not an authoritative
-// hourly prediction: it is exact at each event and monotonic between a high and
-// a low, but the real curve can differ materially at some stations. It is drawn
-// only between two usable endpoints of opposite type (a high and a low) whose
-// times strictly increase and are at most MAX_WAVE_INTERVAL_MS apart. Null
-// before the first event, after the last, across anything else, and at an
-// unusable event.
-function heightIn(sorted, ms) {
-  for (var i = 0; i < sorted.length; i++) {
-    if (sorted[i].time === ms) return sorted[i].bad ? null : sorted[i].height
-    if (sorted[i].time > ms) {
-      if (i === 0) return null
-      var a = sorted[i - 1]
-      var b = sorted[i]
-      if (a.bad || b.bad || a.type === b.type) return null
-      if (!(b.time > a.time) || b.time - a.time > MAX_WAVE_INTERVAL_MS) return null
-      return a.height + (b.height - a.height) * (1 - Math.cos(Math.PI * (ms - a.time) / (b.time - a.time))) / 2
-    }
-  }
-  return null
-}
-
-function waveHeight(events, ms) {
-  if (typeof ms !== "number" || !isFinite(ms)) return null
-  return heightIn(sortedEvents(events), ms)
-}
-
-// The instants of the hours the strip shows, from the report's own hourly
-// strings, which are written in the report's single offset. [] if any hour
-// cannot be read.
-function hourEpochs(report, hours) {
-  if (!isObject(report) || !isObject(report.hourly) || !Array.isArray(report.hourly.time) || !Array.isArray(hours)) return []
-  var offset = report.utc_offset_seconds
-  if (typeof offset !== "number" || !isFinite(offset)) return []
-  var out = []
-  for (var i = 0; i < hours.length; i++) {
-    var h = hours[i]
-    var stamp = isObject(h) && typeof h.reportIndex === "number" ? report.hourly.time[h.reportIndex] : null
-    var seconds = typeof stamp === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(stamp) ? Model.isoLocalToEpoch(stamp, offset) : 0
-    if (!seconds) return []
-    out.push(seconds * 1000)
-  }
-  return out
-}
-
-// The wave over consecutive hours `hourMs`, covering half an hour either side
-// of the first and last: samples at WAVE_SAMPLES_PER_HOUR a hour (fi is the
-// position in hours from the first cell's centre, h the height or null where
-// there is no curve), and a mark for each high or low inside the span. Null
-// when the hours are not consecutive or no stretch of the span has a curve.
-function wave(events, hourMs) {
-  if (!Array.isArray(hourMs) || hourMs.length < 1) return null
-  for (var i = 0; i < hourMs.length; i++) {
-    if (typeof hourMs[i] !== "number" || !isFinite(hourMs[i]) || (i > 0 && hourMs[i] - hourMs[i - 1] !== HOUR_MS)) return null
-  }
-  var sorted = sortedEvents(events)
-  var first = hourMs[0]
-  var from = first - HOUR_MS / 2
-  var to = hourMs[hourMs.length - 1] + HOUR_MS / 2
-  var samples = []
-  var drawn = false
-  var steps = hourMs.length * WAVE_SAMPLES_PER_HOUR
-  for (var k = 0; k <= steps; k++) {
-    var fi = -0.5 + k / WAVE_SAMPLES_PER_HOUR
-    var h = heightIn(sorted, first + fi * HOUR_MS)
-    if (h !== null) drawn = true
-    samples.push({ fi: fi, h: h })
-  }
-  if (!drawn) return null
-  var marks = []
-  for (var j = 0; j < sorted.length; j++) {
-    if (!sorted[j].bad && sorted[j].time >= from && sorted[j].time <= to) {
-      marks.push({ type: sorted[j].type, fi: (sorted[j].time - first) / HOUR_MS, h: sorted[j].height, ms: sorted[j].time })
-    }
-  }
-  return { fromMs: from, toMs: to, samples: samples, marks: marks }
-}
-
-// Pixel positions for a wave over a strip of `count` cells of width `cell` with
-// `gap` between them and `height`. Heights are scaled to the visible span's own
-// min and max, within the lower band of the strip. path holds {x, y} or null
-// (a gap) per sample; marks hold {x, y, type}. Null for no wave or a bad size.
-function waveLayout(waveData, size) {
-  if (!isObject(waveData) || !isObject(size)) return null
-  if (!(size.cell > 0) || !(size.gap >= 0) || !(size.count > 0) || !(size.height > 0)) return null
-  var lo = Infinity
-  var hi = -Infinity
-  var i
-  for (i = 0; i < waveData.samples.length; i++) {
-    var h = waveData.samples[i].h
-    if (h !== null) {
-      lo = Math.min(lo, h)
-      hi = Math.max(hi, h)
-    }
-  }
-  for (i = 0; i < waveData.marks.length; i++) {
-    lo = Math.min(lo, waveData.marks[i].h)
-    hi = Math.max(hi, waveData.marks[i].h)
-  }
-  var top = size.height * WAVE_BAND_TOP
-  var bottom = size.height * WAVE_BAND_BOTTOM
-  var xOf = function(fi) { return fi * (size.cell + size.gap) + size.cell / 2 }
-  var yOf = function(value) { return hi > lo ? top + (1 - (value - lo) / (hi - lo)) * (bottom - top) : (top + bottom) / 2 }
-  var path = []
-  for (i = 0; i < waveData.samples.length; i++) {
-    var s = waveData.samples[i]
-    path.push(s.h === null ? null : { x: xOf(s.fi), y: yOf(s.h) })
-  }
-  var marks = []
-  for (i = 0; i < waveData.marks.length; i++) {
-    marks.push({ x: xOf(waveData.marks[i].fi), y: yOf(waveData.marks[i].h), type: waveData.marks[i].type })
-  }
-  return { path: path, marks: marks }
-}
-
-// The small label at the corner of the wave's band, so it is plainly the tide:
-// "TIDE · <station name>", or just "TIDE" when the name is unusable.
-function waveLabel(station) {
-  var name = isObject(station) && typeof station.name === "string" ? station.name.replace(/[\u0000-\u001f\u007f]/g, "").replace(/^\s+|\s+$/g, "") : ""
-  if (name === "") return "TIDE"
-  if (name.length > 40) name = name.slice(0, 39) + "\u2026"
-  return "TIDE \u00b7 " + name
-}
-
-// "H 5:37 AM" or "L 21:34": the event's wall-clock time in the forecast's zone
-// and the chosen clock. Empty when the type, instant or zone is unusable.
-function markLabel(type, ms, zoneOrOffset, twelveHour) {
-  if ((type !== "high" && type !== "low") || typeof ms !== "number" || !isFinite(ms)) return ""
-  var hhmm = Zone.clock(zoneOrOffset, ms)
+  if (next === null) return ""
+  var hhmm = Zone.clock(zone, next.time)
   if (hhmm === "") return ""
-  return (type === "high" ? "H " : "L ") + Model.formatClock(hhmm, twelveHour, false)
-}
-
-// A text label for each mark, placed at the mark's pixel position:
-// [{ text, type, x, y }]. Empty without a wave and its layout.
-function waveMarkViews(waveData, layout, zoneOrOffset, twelveHour) {
-  if (!isObject(waveData) || !isObject(layout) || !Array.isArray(waveData.marks) || !Array.isArray(layout.marks)) return []
-  var out = []
-  for (var i = 0; i < waveData.marks.length && i < layout.marks.length; i++) {
-    var text = markLabel(waveData.marks[i].type, waveData.marks[i].ms, zoneOrOffset, twelveHour)
-    if (text !== "") out.push({ text: text, type: waveData.marks[i].type, x: layout.marks[i].x, y: layout.marks[i].y })
-  }
-  return out
-}
-
-// The height the wave's band adds to the hourly strip: its label row plus the
-// chart, only when there is a wave to draw, and nothing otherwise.
-function waveBandHeight(waveData, labelRow, chart) {
-  if (!isObject(waveData) || !Array.isArray(waveData.samples)) return 0
-  if (typeof labelRow !== "number" || !isFinite(labelRow) || labelRow < 0) return 0
-  if (typeof chart !== "number" || !isFinite(chart) || chart <= 0) return 0
-  return labelRow + chart
+  var when = Model.formatClock(hhmm, twelveHour, false)
+  var day = localDate(zone, next.time)
+  if (day !== localDate(zone, nowMs)) when = SHORT_WEEKDAYS[new Date(day + "T00:00:00Z").getUTCDay()] + " " + when
+  var high = next.type === "high"
+  var parts = ["TIDE"]
+  var name = cleanName(station)
+  if (name !== "") parts.push(name)
+  parts.push(high ? "Rising" : "Falling")
+  parts.push((high ? "High " : "Low ") + when + " (" + formatHeight(next.height, useImperial) + ")")
+  return parts.join(" \u00b7 ")
 }

@@ -94,21 +94,20 @@ and distance so you can judge it. Tide
 predictions come from NOAA CO-OPS (US coasts and territories) or the Canadian
 Hydrographic Service, using a station index shipped in the plugin
 (`tide-stations.json`, regenerate with `scripts/build-tide-stations.py`). They
-are fetched when the panel opens on the forecast (the hourly strip draws a tide wave from them), at most once a day per station, and
+are fetched when the panel opens on the forecast (the line under the hourly cards uses them), at most once a day per station, and
 cached in `~/.local/state/omarchy/detailed-weather-tides.json`. One setting,
 `tides`, controls them: `auto` (the default) shows tides when the nearest
 station is within 100 km of the forecast location, `on` always uses the nearest
 station at any distance, and `off` never does. With `off`, or `auto` and no
 station in range, nothing is requested, cached or drawn.
 
-The tide chart under the hourly strip (a band labelled `TIDE · <station>`, with an
-`H`/`L` time at each high and low) is an approximate interpolation of those
-predictions, not an authoritative hourly prediction: it joins each predicted
-high to the next low with a half-cosine curve, which is a visual approximation
-and can differ materially from the real tide at some stations. It is drawn only
-between a high and a low that are at most 26 hours apart (diurnal stations can
-have 16 hours or more between them); nothing is drawn across two highs or two
-lows, a missing or unusable event, or a longer gap.
+Under the hourly cards, when tides are active and the cached predictions include
+an event after now, one line gives the next high or low, for example
+`TIDE · Weeks Bay · Falling · Low 9:34 PM (0.0 ft)`: the station, Rising when
+the next event is a high or Falling when it is a low, its time in the forecast's
+own timezone (with the short weekday, `Low Tue 3:10 AM`, when it is not today
+there) and its height in the chosen unit. With tides off, no events, or none
+after now, there is no line and it takes no space.
 
 ### Open radar
 

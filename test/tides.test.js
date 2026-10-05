@@ -637,242 +637,6 @@ test("the day card carries tide rows when it is given a station", () => {
   assert.equal(Detail.dayDetail(report, 0, false, false, undefined, null).tides, null)
 })
 
-// ---- the tide wave behind the hourly strip -------------------------------------
-
-const HOUR_MS = 3600 * 1000
-const ev = (h, type, height) => ({ time: Date.UTC(2026, 9, 5, h), type, height })
-// High 2.0 at 06:00, low 0.0 at 12:00, high 2.0 at 18:00 (UTC).
-const SWING = [ev(6, "high", 2), ev(12, "low", 0), ev(18, "high", 2)]
-
-test("half-cosine interpolation is exact at the events", () => {
-  for (const e of SWING) assert.equal(Tides.waveHeight(SWING, e.time), e.height)
-})
-
-test("between events the height follows h0 + (h1 - h0) * (1 - cos(pi t)) / 2", () => {
-  const t0 = SWING[0].time
-  const t1 = SWING[1].time
-  for (const f of [0.1, 0.25, 0.5, 0.75, 0.9]) {
-    const expected = 2 + (0 - 2) * (1 - Math.cos(Math.PI * f)) / 2
-    assert.ok(Math.abs(Tides.waveHeight(SWING, t0 + f * (t1 - t0)) - expected) < 1e-12, String(f))
-  }
-  assert.equal(Tides.waveHeight(SWING, Date.UTC(2026, 9, 5, 9)), 1)
-})
-
-test("it falls monotonically from a high to a low and rises monotonically back", () => {
-  let last = Infinity
-  for (let m = 0; m <= 360; m += 5) {
-    const h = Tides.waveHeight(SWING, Date.UTC(2026, 9, 5, 6, m))
-    assert.ok(h <= last + 1e-12, `fall at ${m}`)
-    last = h
-  }
-  last = -Infinity
-  for (let m = 0; m <= 360; m += 5) {
-    const h = Tides.waveHeight(SWING, Date.UTC(2026, 9, 5, 12, m))
-    assert.ok(h >= last - 1e-12, `rise at ${m}`)
-    last = h
-  }
-  for (let m = 0; m <= 360; m += 5) {
-    const h = Tides.waveHeight(SWING, Date.UTC(2026, 9, 5, 6, m))
-    assert.ok(h >= 0 && h <= 2)
-  }
-})
-
-test("nothing is drawn before the first event or after the last", () => {
-  assert.equal(Tides.waveHeight(SWING, SWING[0].time - 1), null)
-  assert.equal(Tides.waveHeight(SWING, SWING[2].time + 1), null)
-  assert.equal(Tides.waveHeight([], SWING[0].time), null)
-  assert.equal(Tides.waveHeight(null, SWING[0].time), null)
-  assert.equal(Tides.waveHeight(SWING, NaN), null)
-  assert.equal(Tides.waveHeight(SWING, "x"), null)
-})
-
-test("the longest interval interpolated is a named 26 hours", () => {
-  assert.equal(Tides.MAX_WAVE_INTERVAL_MS, 26 * 3600000)
-})
-
-test("an interval of exactly 26 hours is drawn, one millisecond more is not", () => {
-  const edge = [ev(0, "high", 2), { time: Date.UTC(2026, 9, 5, 26), type: "low", height: 0 }]
-  assert.equal(Tides.waveHeight(edge, Date.UTC(2026, 9, 5, 13)), 1)
-  const wide = [ev(0, "high", 2), { time: Date.UTC(2026, 9, 5, 26, 0, 0, 1), type: "low", height: 0 }]
-  assert.equal(Tides.waveHeight(wide, Date.UTC(2026, 9, 5, 13)), null)
-  assert.equal(Tides.waveHeight(wide, wide[0].time), 2)
-  assert.equal(Tides.waveHeight(wide, wide[1].time), 0)
-})
-
-test("the stretches either side of a gap over 26 hours still draw", () => {
-  const split = [ev(0, "high", 2), ev(6, "low", 0), ev(33, "high", 2), ev(39, "low", 0)]
-  assert.notEqual(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 3)), null)
-  assert.equal(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 20)), null)
-  assert.notEqual(Tides.waveHeight(split, Date.UTC(2026, 9, 5, 36)), null)
-})
-
-// Weeks Bay, Alabama (NOAA 8765148) is a diurnal station: on 2026-10-05 the high is
-// at 10:37 UTC (05:37 local) and the next low at 02:34 UTC on the 6th (21:34 local),
-// almost 16 hours later. test/fixtures/noaa-8765148-gmt.json is the real response.
-test("a legitimate 16-hour diurnal interval at Weeks Bay is drawn", () => {
-  const events = Tides.PROVIDERS.noaa.parse(fixture("noaa-8765148-gmt.json"))
-  const high = events.find(e => e.time === Date.UTC(2026, 9, 5, 10, 37))
-  const low = events.find(e => e.time === Date.UTC(2026, 9, 6, 2, 34))
-  assert.equal(high.type, "high")
-  assert.equal(low.type, "low")
-  const hours = (low.time - high.time) / HOUR_MS
-  assert.ok(hours > 15.9 && hours < 16, String(hours))
-  const mid = high.time + (low.time - high.time) / 2
-  assert.ok(Math.abs(Tides.waveHeight(events, mid) - (high.height + low.height) / 2) < 1e-9)
-  // The strip's visible daytime hours, 06:00-21:00 local (11:00-02:00Z), have a wave.
-  const axis = Array.from({ length: 16 }, (_, i) => Date.UTC(2026, 9, 5, 11 + i))
-  const wave = Tides.wave(events, axis)
-  assert.notEqual(wave, null)
-  assert.ok(wave.samples.filter(x => x.h !== null).length >= 60)
-  assert.equal(wave.samples.filter(x => x.h === null).length, 0)
-  // The high at 10:37Z is inside the span (which starts at 10:30Z); the low at 02:34Z is just past its end.
-  assert.deepEqual(wave.marks.map(m => m.type), ["high"])
-  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 16, height: 100 })
-  assert.ok(layout.path.every(p => p !== null))
-})
-
-test("events of the same type are never interpolated between", () => {
-  const twoHighs = [ev(0, "high", 2), ev(10, "high", 1.5)]
-  assert.equal(Tides.waveHeight(twoHighs, Date.UTC(2026, 9, 5, 5)), null)
-  const twoLows = [ev(0, "low", 0), ev(10, "low", 0.2)]
-  assert.equal(Tides.waveHeight(twoLows, Date.UTC(2026, 9, 5, 5)), null)
-  // Opposite types either side of the pair still draw.
-  const run = [ev(0, "low", 0), ev(6, "high", 2), ev(12, "high", 1.8), ev(18, "low", 0)]
-  assert.notEqual(Tides.waveHeight(run, Date.UTC(2026, 9, 5, 3)), null)
-  assert.equal(Tides.waveHeight(run, Date.UTC(2026, 9, 5, 9)), null)
-  assert.notEqual(Tides.waveHeight(run, Date.UTC(2026, 9, 5, 15)), null)
-})
-
-test("an event with an unusable height or type breaks the curve instead of being skipped over", () => {
-  for (const bad of [{ type: "low", height: NaN }, { type: "low", height: Infinity }, { type: "low", height: "0" },
-    { type: "low", height: null }, { type: "sideways", height: 0 }]) {
-    const events = [ev(0, "high", 2), Object.assign({ time: Date.UTC(2026, 9, 5, 6) }, bad), ev(12, "low", 0)]
-    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 3)), null, JSON.stringify(bad))
-    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 9)), null, JSON.stringify(bad))
-    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 0)), 2)
-    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 12)), 0)
-  }
-})
-
-test("timestamps must strictly increase between the endpoints", () => {
-  const same = [ev(0, "high", 2), ev(6, "low", 0), { time: Date.UTC(2026, 9, 5, 6), type: "high", height: 2 }, ev(12, "low", 0)]
-  // Two events at 06:00 leave nothing to interpolate across between them.
-  assert.equal(Tides.waveHeight(same, Date.UTC(2026, 9, 5, 9)) !== null, true)
-  assert.equal(Tides.waveHeight([ev(6, "low", 0), ev(6, "high", 2)], Date.UTC(2026, 9, 5, 6, 30)), null)
-  for (const t of [NaN, Infinity, "x", null]) {
-    const events = [ev(0, "high", 2), { time: t, type: "low", height: 0 }, ev(12, "low", 0)]
-    assert.equal(Tides.waveHeight(events, Date.UTC(2026, 9, 5, 6)), 1)
-  }
-})
-
-test("malformed or unsorted events are ignored or put in order", () => {
-  const messy = [ev(18, "high", 2), null, { time: "x", type: "low", height: 0 }, ev(6, "high", 2), ev(12, "low", 0), 5,
-    { time: Date.UTC(2026, 9, 5, 13), type: "low", height: NaN }]
-  assert.equal(Tides.waveHeight(messy, Date.UTC(2026, 9, 5, 9)), 1)
-})
-
-test("the hour axis is the report's own hourly strings read in the offset they were written in", () => {
-  const report = {
-    utc_offset_seconds: -14400,
-    hourly: { time: ["2026-11-01T00:00", "2026-11-01T01:00", "2026-11-01T02:00", "2026-11-01T03:00"] }
-  }
-  const hours = [{ reportIndex: 1 }, { reportIndex: 2 }, { reportIndex: 3 }]
-  assert.deepEqual(Tides.hourEpochs(report, hours), [Date.UTC(2026, 10, 1, 5), Date.UTC(2026, 10, 1, 6), Date.UTC(2026, 10, 1, 7)])
-  for (const bad of [[{ reportIndex: 9 }], [{ reportIndex: -1 }], [{}], [null], "x"]) assert.deepEqual(Tides.hourEpochs(report, bad), [])
-  assert.deepEqual(Tides.hourEpochs({ hourly: { time: ["2026-11-01T00:00"] } }, [{ reportIndex: 0 }]), [])
-  assert.deepEqual(Tides.hourEpochs(null, hours), [])
-})
-
-const hoursFrom = (h, n) => Array.from({ length: n }, (_, i) => Date.UTC(2026, 9, 5, h + i))
-
-test("the wave covers exactly the hours shown, half an hour either side of the first and last", () => {
-  const wave = Tides.wave(SWING, hoursFrom(5, 10)) // 05:00 .. 14:00
-  assert.equal(wave.fromMs, Date.UTC(2026, 9, 5, 4, 30))
-  assert.equal(wave.toMs, Date.UTC(2026, 9, 5, 14, 30))
-  const first = wave.samples[0]
-  const last = wave.samples[wave.samples.length - 1]
-  assert.equal(first.fi, -0.5)
-  assert.equal(last.fi, 9.5)
-  // 04:30-06:00 is before the first event: nothing drawn there.
-  assert.equal(first.h, null)
-  assert.notEqual(last.h, null)
-  assert.ok(wave.samples.every(s => s.fi >= -0.5 && s.fi <= 9.5))
-})
-
-test("marks are the highs and lows inside the span, and only those", () => {
-  const wave = Tides.wave(SWING, hoursFrom(5, 10))
-  assert.deepEqual(wave.marks.map(m => [m.type, m.fi, m.h]), [["high", 1, 2], ["low", 7, 0]])
-  const edgeIn = Tides.wave([ev(4, "low", 0), ev(5, "high", 2), ev(14, "low", 0), ev(15, "high", 2)], hoursFrom(5, 10))
-  assert.deepEqual(edgeIn.marks.map(m => m.fi), [0, 9])
-})
-
-test("with no events in range, or inputs that are not hours, there is no wave", () => {
-  assert.equal(Tides.wave(SWING, hoursFrom(20, 3)), null)
-  assert.equal(Tides.wave([], hoursFrom(5, 10)), null)
-  assert.equal(Tides.wave(null, hoursFrom(5, 10)), null)
-  assert.equal(Tides.wave(SWING, []), null)
-  assert.equal(Tides.wave(SWING, [NaN]), null)
-  assert.equal(Tides.wave(SWING, [Date.UTC(2026, 9, 5, 5), Date.UTC(2026, 9, 5, 8)]), null)
-})
-
-test("across the daylight-saving change the wave runs on real elapsed time", () => {
-  const zone = nyZone()
-  const report = { utc_offset_seconds: -14400, hourly: { time: [] } }
-  for (let h = 0; h < 8; h++) report.hourly.time.push(`2026-11-01T0${h}:00`)
-  const hours = report.hourly.time.map((_, i) => ({ reportIndex: i }))
-  const axis = Tides.hourEpochs(report, hours)
-  // Eight consecutive real hours; the wall clock repeats 01:00 on the way.
-  assert.deepEqual(axis.map((t, i) => i === 0 ? 1 : (t - axis[i - 1]) / HOUR_MS), [1, 1, 1, 1, 1, 1, 1, 1])
-  assert.deepEqual(axis.map(t => Zone.clock(zone, t)), ["00:00", "01:00", "01:00", "02:00", "03:00", "04:00", "05:00", "06:00"])
-  // A high at 05:00Z and a low at 11:00Z: the wave is the same over the repeated hour as any other.
-  const events = [{ time: Date.UTC(2026, 10, 1, 5), type: "high", height: 2 }, { time: Date.UTC(2026, 10, 1, 11), type: "low", height: 0 }]
-  const wave = Tides.wave(events, axis)
-  const at = fi => wave.samples.find(s => s.fi === fi).h
-  assert.equal(at(1), 2 + (0 - 2) * (1 - Math.cos(Math.PI * 0)) / 2)
-  assert.ok(Math.abs(at(2) - (1 + Math.cos(Math.PI / 6))) < 1e-9)
-  assert.ok(Math.abs(at(3) - (1 + Math.cos(Math.PI / 3))) < 1e-9)
-  assert.deepEqual(wave.marks.map(m => [m.type, m.fi]), [["high", 1], ["low", 7]])
-  // Placed by local clock rather than UTC it would drift an hour: 05:00Z is 01:00 EDT, not 00:00 EST.
-  assert.equal(Zone.clock(zone, events[0].time), "01:00")
-})
-
-test("the layout scales to the visible span's min and max, in the lower part of the strip", () => {
-  const wave = Tides.wave(SWING, hoursFrom(5, 10))
-  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 10, height: 100 })
-  const ys = layout.path.filter(p => p !== null).map(p => p.y)
-  assert.ok(Math.min(...ys) >= Tides.WAVE_BAND_TOP * 100 - 1e-9 && Math.max(...ys) <= Tides.WAVE_BAND_BOTTOM * 100 + 1e-9)
-  // The high mark is the visible maximum and sits highest, the low mark lowest.
-  const high = layout.marks.find(m => m.type === "high")
-  const low = layout.marks.find(m => m.type === "low")
-  assert.equal(high.y, Math.min(...ys))
-  assert.equal(low.y, Math.max(...ys))
-  // Cell centres: hour index 1 is the second cell, 44 px on, centre at 44 + 20.
-  assert.equal(high.x, 64)
-  assert.equal(low.x, 7 * 44 + 20)
-})
-
-test("the layout leaves gaps as nulls and a flat span in the middle of the band", () => {
-  const wave = Tides.wave(SWING, hoursFrom(5, 10))
-  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 10, height: 100 })
-  assert.equal(layout.path[0], null) // before the first event
-  assert.notEqual(layout.path[layout.path.length - 1], null)
-  const flat = Tides.wave([ev(5, "high", 1), ev(8, "low", 1)], hoursFrom(5, 4))
-  const l = Tides.waveLayout(flat, { cell: 40, gap: 4, count: 4, height: 100 })
-  const ys = new Set(l.path.filter(p => p !== null).map(p => p.y))
-  assert.equal(ys.size, 1)
-  const y = [...ys][0]
-  assert.ok(y > Tides.WAVE_BAND_TOP * 100 && y < Tides.WAVE_BAND_BOTTOM * 100)
-})
-
-test("the layout refuses a missing wave or an unusable size", () => {
-  assert.equal(Tides.waveLayout(null, { cell: 40, gap: 4, count: 10, height: 100 }), null)
-  const wave = Tides.wave(SWING, hoursFrom(5, 10))
-  for (const bad of [null, {}, { cell: 0, gap: 4, count: 10, height: 100 }, { cell: 40, gap: 4, count: 10, height: 0 },
-    { cell: NaN, gap: 4, count: 10, height: 100 }]) {
-    assert.equal(Tides.waveLayout(wave, bad), null, JSON.stringify(bad))
-  }
-})
-
 // ---- when to fetch: whenever the open forecast view has a station to show ------
 
 const ready = () => ({ opened: true, view: "forecast", key: "noaa:9414290", cacheLoaded: true, running: false,
@@ -919,82 +683,108 @@ test("a malformed state never fetches", () => {
   assert.equal(Tides.wantsFetch(Object.assign(ready(), { cache: null })), true)
 })
 
-// ---- the wave must read as a tide chart ------------------------------------------
+// ---- the one line of text below the hourly cards ------------------------------
 
-const CDT = -5 * 3600 // Weeks Bay, Alabama, in October
+const CDT_ZONE = -5 * 3600 // Weeks Bay, Alabama, in October
+const WEEKS_BAY = { provider: "noaa", id: "8765148", name: "Weeks Bay", lat: 30.4, lon: -87.8 }
+const weeksBayEvents = () => Tides.PROVIDERS.noaa.parse(fixture("noaa-8765148-gmt.json"))
+const pick = (opts, key, fallback) => (key in opts ? opts[key] : fallback)
+const line = (now, opts = {}) => Tides.nextLine(pick(opts, "station", WEEKS_BAY), pick(opts, "events", weeksBayEvents()), now,
+  pick(opts, "zone", CDT_ZONE), pick(opts, "imperial", true), pick(opts, "twelve", true))
 
-test("the band's label names the tide and the station", () => {
-  assert.equal(Tides.waveLabel({ name: "Weeks Bay" }), "TIDE · Weeks Bay")
-  assert.equal(Tides.waveLabel({ name: "  Point Atkinson \n" }), "TIDE · Point Atkinson")
-  for (const bad of [null, undefined, {}, { name: "" }, { name: "   " }, { name: 5 }, "Weeks Bay", []]) {
-    assert.equal(Tides.waveLabel(bad), "TIDE", JSON.stringify(bad))
-  }
-  assert.equal(Tides.waveLabel({ name: "a\u0000b\u001fc" }), "TIDE · abc")
-  assert.ok(Tides.waveLabel({ name: "x".repeat(200) }).length <= 48)
+test("falling: the next event is a low", () => {
+  // 12:00 local on 2026-10-05; the next event is the low at 21:34 local that evening.
+  assert.equal(line(Date.UTC(2026, 9, 5, 17)), "TIDE · Weeks Bay · Falling · Low 9:34 PM (0.0 ft)")
 })
 
-test("an event label is H or L and the time in the chosen clock", () => {
-  const high = Date.UTC(2026, 9, 5, 10, 37)
-  const low = Date.UTC(2026, 9, 6, 2, 34)
-  assert.equal(Tides.markLabel("high", high, CDT, true), "H 5:37 AM")
-  assert.equal(Tides.markLabel("low", low, CDT, true), "L 9:34 PM")
-  assert.equal(Tides.markLabel("high", high, CDT, false), "H 05:37")
-  assert.equal(Tides.markLabel("low", low, CDT, false), "L 21:34")
+test("rising: the next event is a high", () => {
+  // 00:00 local; the next event is the high at 05:37 local.
+  assert.equal(line(Date.UTC(2026, 9, 5, 5)), "TIDE · Weeks Bay · Rising · High 5:37 AM (1.6 ft)")
 })
 
-test("an event label follows the zone's wall clock across a clock change", () => {
+test("both clock settings", () => {
+  assert.equal(line(Date.UTC(2026, 9, 5, 17), { twelve: false }), "TIDE · Weeks Bay · Falling · Low 21:34 (0.0 ft)")
+  assert.equal(line(Date.UTC(2026, 9, 5, 5), { twelve: false }), "TIDE · Weeks Bay · Rising · High 05:37 (1.6 ft)")
+})
+
+test("both unit settings, one decimal", () => {
+  assert.equal(line(Date.UTC(2026, 9, 5, 5), { imperial: false }), "TIDE · Weeks Bay · Rising · High 5:37 AM (0.5 m)")
+  assert.equal(line(Date.UTC(2026, 9, 5, 17), { imperial: false }), "TIDE · Weeks Bay · Falling · Low 9:34 PM (0.0 m)")
+  const big = [{ time: Date.UTC(2026, 9, 5, 18), type: "high", height: 12.04 }]
+  assert.equal(line(Date.UTC(2026, 9, 5, 17), { events: big, imperial: false }), "TIDE · Weeks Bay · Rising · High 1:00 PM (12.0 m)")
+  assert.equal(line(Date.UTC(2026, 9, 5, 17), { events: big }), "TIDE · Weeks Bay · Rising · High 1:00 PM (39.5 ft)")
+})
+
+test("a next event on a later local day carries the short weekday", () => {
+  // 22:00 local on Mon Oct 5; the next event is the high at 06:00 local on Tue Oct 6.
+  assert.equal(line(Date.UTC(2026, 9, 6, 3)), "TIDE · Weeks Bay · Rising · High Tue 6:00 AM (1.4 ft)")
+  assert.equal(line(Date.UTC(2026, 9, 6, 3), { twelve: false }), "TIDE · Weeks Bay · Rising · High Tue 06:00 (1.4 ft)")
+})
+
+test("today is judged in the forecast's zone, not in UTC", () => {
+  // 18:00 local on the 5th is already the 6th in UTC, and so is the event at 02:34Z; locally both are the 5th.
+  assert.equal(line(Date.UTC(2026, 9, 5, 23)), "TIDE · Weeks Bay · Falling · Low 9:34 PM (0.0 ft)")
+  // The same instants read in UTC would be the same day too, but an eastern zone moves the event to the next day.
+  const east = line(Date.UTC(2026, 9, 5, 23), { zone: 10 * 3600 })
+  assert.equal(east, "TIDE · Weeks Bay · Falling · Low 12:34 PM (0.0 ft)")
+  const nextDayEast = line(Date.UTC(2026, 9, 5, 12), { zone: 10 * 3600 })
+  assert.match(nextDayEast, /Low Tue 12:34 PM/)
+})
+
+test("across a clock change the line follows the zone's wall clock", () => {
   const zone = nyZone()
-  assert.equal(Tides.markLabel("high", Date.UTC(2026, 10, 1, 5, 30), zone, false), "H 01:30")
-  assert.equal(Tides.markLabel("low", Date.UTC(2026, 10, 1, 6, 30), zone, false), "L 01:30")
-  assert.equal(Tides.markLabel("low", Date.UTC(2026, 10, 1, 6, 30), zone, true), "L 1:30 AM")
+  const events = [{ time: Date.UTC(2026, 10, 1, 6, 30), type: "low", height: 0.5 }, { time: Date.UTC(2026, 10, 2, 5, 30), type: "high", height: 1.5 }]
+  assert.equal(Tides.nextLine(SF, events, Date.UTC(2026, 10, 1, 4), zone, false, false), "TIDE · San Francisco · Falling · Low 01:30 (0.5 m)")
+  assert.equal(Tides.nextLine(SF, events, Date.UTC(2026, 10, 1, 7), zone, false, false), "TIDE · San Francisco · Rising · High Mon 00:30 (1.5 m)")
 })
 
-test("a label that cannot be made is empty, not a wrong time", () => {
-  for (const [type, ms, zone] of [["tide", 1, 0], ["high", NaN, 0], ["high", "x", 0], ["low", 1, "x"], [null, 1, 0]]) {
-    assert.equal(Tides.markLabel(type, ms, zone, true), "", JSON.stringify([type, ms, zone]))
+test("the next event is strictly after now, whatever order the events come in", () => {
+  const shuffled = weeksBayEvents().reverse()
+  assert.equal(line(Date.UTC(2026, 9, 5, 5), { events: shuffled }), "TIDE · Weeks Bay · Rising · High 5:37 AM (1.6 ft)")
+  // At the very instant of an event, that event is no longer next.
+  assert.equal(line(Date.UTC(2026, 9, 5, 10, 37)), "TIDE · Weeks Bay · Falling · Low 9:34 PM (0.0 ft)")
+  assert.match(line(Date.UTC(2026, 9, 5, 10, 36, 59)), /Rising · High 5:37 AM/)
+})
+
+test("no line when there is no event after now", () => {
+  assert.equal(line(Date.UTC(2026, 9, 20)), "")
+  assert.equal(line(Date.UTC(2026, 9, 7, 21, 49)), "")
+  assert.equal(line(Date.UTC(2026, 9, 5), { events: [] }), "")
+})
+
+test("no line, and no throw, for missing or malformed inputs", () => {
+  const now = Date.UTC(2026, 9, 5, 17)
+  for (const events of [null, undefined, "x", 5, {}, [null, 7, "y", [], {}], [{ time: "x", type: "high", height: 1 }]]) {
+    assert.equal(line(now, { events }), "", JSON.stringify(events))
   }
+  for (const bad of [{ type: "sideways", height: 1 }, { type: "high", height: NaN }, { type: "high", height: "1" }, { type: "high", height: null }]) {
+    assert.equal(line(now, { events: [Object.assign({ time: Date.UTC(2026, 9, 5, 20) }, bad)] }), "", JSON.stringify(bad))
+  }
+  assert.equal(line(NaN), "")
+  assert.equal(line("x"), "")
+  assert.equal(line(null), "")
+  assert.equal(line(now, { zone: "x" }), "")
+  assert.equal(line(now, { zone: null }), "")
 })
 
-test("marks carry their instant, and each gets a placed text label for both clocks", () => {
-  const events = Tides.PROVIDERS.noaa.parse(fixture("noaa-8765148-gmt.json"))
-  // The hourly strip from 06:00 to 21:00 local (11:00Z to 02:00Z).
-  const axis = Array.from({ length: 16 }, (_, i) => Date.UTC(2026, 9, 5, 11 + i))
-  const wave = Tides.wave(events, axis)
-  assert.deepEqual(wave.marks.map(m => m.ms), [Date.UTC(2026, 9, 5, 10, 37)])
-  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 16, height: 100 })
-  const twelve = Tides.waveMarkViews(wave, layout, CDT, true)
-  assert.deepEqual(twelve.map(v => [v.text, v.type, v.x, v.y]), [["H 5:37 AM", "high", layout.marks[0].x, layout.marks[0].y]])
-  assert.deepEqual(Tides.waveMarkViews(wave, layout, CDT, false).map(v => v.text), ["H 05:37"])
+test("an unusable event is skipped, the next good one is used", () => {
+  const events = [{ time: Date.UTC(2026, 9, 5, 18), type: "high", height: NaN }, { time: Date.UTC(2026, 9, 5, 20), type: "low", height: 0.3 }]
+  assert.equal(line(Date.UTC(2026, 9, 5, 17), { events }), "TIDE · Weeks Bay · Falling · Low 3:00 PM (1.0 ft)")
 })
 
-test("every high and low in the visible hours is labelled", () => {
-  const events = [ev(0, "low", 0), ev(6, "high", 2), ev(12, "low", 0), ev(18, "high", 2)]
-  const axis = hoursFrom(1, 20)
-  const wave = Tides.wave(events, axis)
-  const layout = Tides.waveLayout(wave, { cell: 40, gap: 4, count: 20, height: 100 })
-  const views = Tides.waveMarkViews(wave, layout, 0, false)
-  assert.deepEqual(views.map(v => v.text), ["H 06:00", "L 12:00", "H 18:00"])
-  assert.deepEqual(views.map(v => v.type), ["high", "low", "high"])
+test("the station name is cleaned, and left out when unusable", () => {
+  const now = Date.UTC(2026, 9, 5, 17)
+  assert.match(line(now, { station: { name: "  Point Atkinson \n" } }), /^TIDE · Point Atkinson · Falling/)
+  assert.match(line(now, { station: { name: "a\u0000b\u001fc" } }), /^TIDE · abc · Falling/)
+  for (const station of [null, undefined, {}, { name: "" }, { name: "   " }, { name: 5 }, "Weeks Bay", []]) {
+    assert.match(line(now, { station }), /^TIDE · Falling · Low 9:34 PM/, JSON.stringify(station))
+  }
+  assert.ok(line(now, { station: { name: "x".repeat(200) } }).length < 100)
 })
 
-test("no views without a wave or a layout", () => {
-  assert.deepEqual(Tides.waveMarkViews(null, null, 0, false), [])
-  const wave = Tides.wave(SWING, hoursFrom(5, 10))
-  assert.deepEqual(Tides.waveMarkViews(wave, null, 0, false), [])
-  assert.deepEqual(Tides.waveMarkViews(null, { path: [], marks: [] }, 0, false), [])
-})
-
-test("the band takes height only when there is a wave to draw", () => {
-  const wave = Tides.wave(SWING, hoursFrom(5, 10))
-  assert.equal(Tides.waveBandHeight(wave, 16, 64), 80)
-  for (const none of [null, undefined, {}, 5]) assert.equal(Tides.waveBandHeight(none, 16, 64), 0)
-  // No interpolable interval in the visible hours: no wave, so no band.
-  assert.equal(Tides.waveBandHeight(Tides.wave(SWING, hoursFrom(20, 3)), 16, 64), 0)
-  assert.equal(Tides.waveBandHeight(Tides.wave([], hoursFrom(5, 10)), 16, 64), 0)
-  assert.equal(Tides.waveBandHeight(Tides.wave([ev(0, "high", 2), ev(10, "high", 1)], hoursFrom(1, 8)), 16, 64), 0)
-  for (const bad of [[NaN, 64], [16, -1], ["16", 64], [16, undefined]]) assert.equal(Tides.waveBandHeight(wave, bad[0], bad[1]), 0)
-})
-
-test("the chart keeps room above the highs and below the lows for their labels", () => {
-  assert.ok(Tides.WAVE_BAND_TOP >= 0.25 && Tides.WAVE_BAND_BOTTOM <= 0.75 && Tides.WAVE_BAND_BOTTOM > Tides.WAVE_BAND_TOP)
+test("the curve and its geometry are gone", () => {
+  for (const gone of ["wave", "waveHeight", "waveLayout", "waveLabel", "markLabel", "waveMarkViews", "waveBandHeight", "hourEpochs",
+    "heightIn", "sortedEvents", "MAX_WAVE_INTERVAL_MS", "MAX_WAVE_GAP_MS", "WAVE_BAND_TOP", "WAVE_BAND_BOTTOM"]) {
+    assert.equal(Tides[gone], undefined, gone)
+  }
 })

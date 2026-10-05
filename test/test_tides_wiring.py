@@ -90,7 +90,7 @@ class TideWiringTests(unittest.TestCase):
         self.assertEqual(PANEL.count("tideProc.running = true"), 1)
 
     def test_ensure_runs_whenever_one_of_its_inputs_changes(self):
-        for trigger in ("onOpenedChanged: ensureTides()", "onMainViewChanged: ensureTides()", "onTideKeyChanged: ensureTides()"):
+        for trigger in ("onMainViewChanged: ensureTides()", "onTideKeyChanged: ensureTides()"):
             self.assertIn(trigger, PANEL)
         # Once the cache file has been read, and when a response ends.
         self.assertGreaterEqual(block(PANEL, "id: tideCacheFile", "\n  Process {").count("root.ensureTides()"), 2)
@@ -146,70 +146,57 @@ class TideWiringTests(unittest.TestCase):
     def strip(self):
         return PANEL.split("id: hourlyStrip", 1)[1].split("// ---- METRICS", 1)[0]
 
-    def test_the_wave_is_one_canvas_in_its_own_band_below_the_numbers(self):
-        self.assertEqual(PANEL.count("id: tideWaveCanvas"), 1)
-        self.assertIn("id: tideWaveCanvas", self.strip())
-        body = self.wave_canvas()
-        for contract in ("visible: root.tideWave !== null", "y: hourRow.height + root.tideLabelRow",
-                         "height: root.tideChartHeight", "property var layout: root.tideLayout", "arc("):
-            self.assertIn(contract, body)
-        # Not drawn behind the hourly numbers any more.
-        self.assertNotIn("z: -1", body)
-        self.assertNotIn("Tides.wave", body)
+    def test_no_canvas_or_curve_is_left_for_tides(self):
+        for gone in ("tideWave", "tideWaveCanvas", "tideLayout", "tideBandHeight", "tideChartHeight", "tideLabelRow",
+                     "tideMarkViews", "tideLabelText", "waveLayout", "waveMarkViews", "waveBandHeight", "hourEpochs"):
+            self.assertNotIn(gone, PANEL)
+        self.assertNotIn("Canvas", self.strip())
+        for gone in ("function wave(", "function waveHeight(", "function heightIn(", "function waveLayout(",
+                     "MAX_WAVE", "WAVE_BAND", "HOUR_MS", "half-cosine"):
+            self.assertNotIn(gone, TIDES)
 
-    def test_the_band_adds_height_only_when_the_wave_is_shown(self):
-        strip_head = self.strip().split("Canvas {", 1)[0]
-        self.assertIn("height: hourRow.implicitHeight + root.tideBandHeight", strip_head)
-        self.assertIn("contentHeight: hourRow.implicitHeight + root.tideBandHeight", strip_head)
-        self.assertIn("readonly property real tideBandHeight: Tides.waveBandHeight(tideWave, tideLabelRow, tideChartHeight)", PANEL)
+    def test_the_line_is_built_by_the_pure_function_from_the_cached_events(self):
+        line = block(PANEL, "readonly property string tideLine:", "\n\n")
+        self.assertIn("tideInfo", line)
+        self.assertIn("Tides.nextLine(tideInfo.station, tideInfo.events, tideNow, Zone.of(zonedReport), useImperial, use12Hour)", line)
+        # Nothing at all (an empty string) without a station.
+        self.assertIn(': ""', line)
 
-    def test_the_wave_is_labelled_as_the_tide_with_the_station(self):
-        strip = self.strip()
-        label = strip.split("root.tideLabelText", 1)[0].rsplit("Text {", 1)[1]
-        self.assertIn("visible: root.tideWave !== null", label)
-        self.assertIn("y: hourRow.height", label)
-        self.assertIn("font.pixelSize: Style.font.caption", strip.split("root.tideLabelText", 1)[1].split("}", 1)[0])
-        self.assertIn("readonly property string tideLabelText: tideInfo ? Tides.waveLabel(tideInfo.station)", PANEL)
+    def test_the_line_is_one_caption_text_below_the_hourly_cards_taking_no_height_when_empty(self):
+        strip_and_after = PANEL.split("id: hourlyStrip", 1)[1].split("// ---- METRICS", 1)[0]
+        line = strip_and_after.split("text: root.tideLine", 1)
+        self.assertEqual(len(line), 2)
+        before = line[0].rsplit("Text {", 1)[1]
+        after = line[1].split("}", 1)[0]
+        self.assertIn('visible: text !== ""', before)
+        self.assertIn("textFormat: Text.PlainText", before)
+        self.assertIn("font.pixelSize: Style.font.caption", after)
+        for banned in ("height:", "implicitHeight"):
+            self.assertNotIn(banned, before + after)
+        # It sits after the strip, not inside it, so an invisible line adds no height.
+        self.assertLess(strip_and_after.index("id: hourRow"), strip_and_after.index("text: root.tideLine"))
 
-    def test_each_high_and_low_has_a_text_label_in_the_chosen_clock(self):
-        strip = self.strip()
-        self.assertIn("model: root.tideMarkViews", strip)
-        marks = strip.split("model: root.tideMarkViews", 1)[1].split("Row {\n                id: hourRow", 1)[0]
-        self.assertIn("text: modelData.text", marks)
-        self.assertIn("font.pixelSize: Style.font.caption", marks)
-        self.assertIn("Tides.waveMarkViews(tideWave, tideLayout, Zone.of(zonedReport), use12Hour)", PANEL)
+    def test_the_line_stays_current_with_one_slow_timer_only_while_there_is_something_to_show(self):
+        timer = block(PANEL, "id: tideNowTimer", "\n  }\n")
+        self.assertIn("running: root.opened && root.tideChoice !== null", timer)
+        self.assertIn("repeat: true", timer)
+        self.assertIn("interval: 60000", timer)
+        self.assertIn("root.tideNow = Date.now()", timer)
+        opened = block(PANEL, "onOpenedChanged: {", "\n  }\n")
+        self.assertIn("tideNow = Date.now()", opened)
+        self.assertIn("ensureTides()", opened)
+        self.assertEqual(PANEL.count("onOpenedChanged"), 1)
 
-    def wave_canvas(self):
-        return PANEL.split("id: tideWaveCanvas", 1)[1].split("\n              }\n", 1)[0]
-
-    def test_the_wave_repaints_only_when_its_inputs_change(self):
-        body = self.wave_canvas()
-        for handler in ("onLayoutChanged", "onStrokeChanged", "onWidthChanged", "onHeightChanged"):
-            self.assertIn(handler + ": requestPaint()", body)
-        self.assertEqual(len(re.findall(r"requestPaint\(\)", body)), 4)
-        for banned in ("Timer", "NumberAnimation", "FrameAnimation", "running", "Behavior"):
-            self.assertNotIn(banned, body)
-        self.assertNotIn("requestPaint", body.split("onPaint:", 1)[1])
-
-    def test_the_wave_does_no_work_and_asks_for_nothing_when_tides_are_inactive(self):
-        wave = block(PANEL, "readonly property var tideWave:", "\n\n")
-        # Guarded by the same station the card uses, and only cached events.
-        self.assertIn("tideInfo", wave)
-        self.assertIn("tideInfo.events", wave)
-        self.assertIn("Tides.wave(", wave)
-        self.assertIn("Tides.hourEpochs(dailyForecastReport, hourly)", wave)
-        self.assertIn(": null", wave)
-        # Still exactly one place that starts a request: the day card's.
-        self.assertEqual(PANEL.count("tideProc.running = true"), 1)
-
-    def test_the_docs_call_the_wave_an_approximation(self):
+    def test_the_docs_describe_the_line_and_no_curve(self):
         readme = (PLUGIN / "README.md").read_text(encoding="utf-8")
-        self.assertIn("approximate", readme)
-        self.assertIn("not an authoritative hourly prediction", readme)
-        self.assertIn("26 hours", readme)
-        self.assertIn("approximate", MANIFEST["barWidget"]["schema"][[e["key"] for e in MANIFEST["barWidget"]["schema"]].index("tides")]["description"])
-        self.assertIn("MAX_WAVE_INTERVAL_MS = 26 * 3600000", TIDES)
-        self.assertNotIn("14 * 3600000", TIDES)
+        self.assertIn("TIDE · ", readme)
+        self.assertIn("Rising", readme)
+        for gone in ("interpolat", "half-cosine", "tide chart", "tide wave", "26 hours"):
+            self.assertNotIn(gone, readme)
+        description = MANIFEST["barWidget"]["schema"][[e["key"] for e in MANIFEST["barWidget"]["schema"]].index("tides")]["description"]
+        for gone in ("interpolat", "chart", "wave", "approximate"):
+            self.assertNotIn(gone, description)
+        self.assertIn("next high or low", description)
 
     def test_no_place_is_hard_coded(self):
         for source in (TIDES, PANEL, DAY):
