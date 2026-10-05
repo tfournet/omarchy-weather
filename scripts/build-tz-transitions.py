@@ -7,8 +7,11 @@
 Open-Meteo writes every time in a response in ONE fixed offset (the one in force
 when it was fetched), so a ten-day forecast that crosses a daylight-saving
 change cannot say what the wall clock reads on each date. The panel looks the
-zone up in this table instead. Only zones that change offset between START_YEAR
-and END_YEAR are listed; a zone that is not listed keeps the response's offset.
+zone up in this table instead. The table covers the previous calendar year
+through six years ahead (see default_window); outside those years, and for a zone
+that is not listed, the response's own offset is used. The plugin stops trusting
+the table within a year of its end, so regenerate it at least once a year.
+Only zones that change offset in that window are listed.
 
 Entry: "Zone/Name": [offset_before, minute_1, offset_1, minute_2, offset_2, ...]
 Offsets are seconds east of UTC; minutes are minutes since the Unix epoch (UTC).
@@ -20,8 +23,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, available_timezones
 
-START_YEAR = 2026
-END_YEAR = 2032
+YEARS_BEFORE = 1
+YEARS_AFTER = 6
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "tz-transitions.json"
 
 
@@ -30,10 +33,15 @@ def offset_at(zone, minute):
     return int(moment.utcoffset().total_seconds())
 
 
-def transitions(name):
+def default_window(year):
+    """(first year, last year) covered, relative to `year`."""
+    return year - YEARS_BEFORE, year + YEARS_AFTER
+
+
+def transitions(name, start_year, end_year):
     zone = ZoneInfo(name)
-    start = int(datetime(START_YEAR, 1, 1, tzinfo=timezone.utc).timestamp() // 60)
-    end = int(datetime(END_YEAR + 1, 1, 1, tzinfo=timezone.utc).timestamp() // 60)
+    start = int(datetime(start_year, 1, 1, tzinfo=timezone.utc).timestamp() // 60)
+    end = int(datetime(end_year + 1, 1, 1, tzinfo=timezone.utc).timestamp() // 60)
     step = 6 * 60
     before = offset_at(zone, start)
     out = []
@@ -54,27 +62,35 @@ def transitions(name):
     return [before] + out if out else None
 
 
-def build():
+def build(start_year, end_year):
     table = {}
     for name in sorted(available_timezones()):
         try:
-            row = transitions(name)
+            row = transitions(name, start_year, end_year)
         except Exception:
             continue
         if row:
             table[name] = row
-    return {"version": 1, "from": START_YEAR, "to": END_YEAR, "zones": table}
+    return {"version": 1, "from": start_year, "to": end_year, "zones": table}
 
 
 def main():
-    text = json.dumps(build(), separators=(",", ":")) + "\n"
     if "--check" in sys.argv:
+        # Verify the committed data against the tz database for the years it
+        # claims to cover. Expiry is a separate question (test_tz_table.py).
         current = DEFAULT_OUT.read_text(encoding="utf-8") if DEFAULT_OUT.exists() else ""
+        try:
+            body = json.loads(current)
+            window = (body["from"], body["to"])
+        except (ValueError, KeyError, TypeError):
+            window = default_window(datetime.now(timezone.utc).year)
+        text = json.dumps(build(*window), separators=(",", ":")) + "\n"
         if current != text:
             print("tz-transitions.json is out of date; run scripts/build-tz-transitions.py")
             return 1
         print("tz-transitions.json is up to date")
         return 0
+    text = json.dumps(build(*default_window(datetime.now(timezone.utc).year)), separators=(",", ":")) + "\n"
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT
     out.write_text(text, encoding="utf-8")
     print("%s: %d zones, %d bytes" % (out, len(json.loads(text)["zones"]), len(text.encode())))

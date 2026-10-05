@@ -57,6 +57,123 @@ test("midnight of a date uses the offset in force then, and day lengths follow",
   assert.equal((Zone.midnight(zone, "2026-03-09") - Zone.midnight(zone, "2026-03-08")) / H, 23)
 })
 
+// ---- N1: a date begins at the first instant whose local date is that date ----
+
+const tableZone = (name, offset, nowMs) => Zone.forReport({ timezone: name, utc_offset_seconds: offset }, table(), nowMs)
+const NOW = Date.UTC(2026, 9, 5)
+
+test("a repeated midnight (Havana, Nov 1 2026) starts the date at the earlier instant", () => {
+  const havana = tableZone("America/Havana", -14400, NOW)
+  assert.equal(Zone.midnight(havana, "2026-11-01"), Date.UTC(2026, 10, 1, 4))
+  assert.equal(Zone.clock(havana, Zone.midnight(havana, "2026-11-01")), "00:00")
+  // The date after starts at the second midnight's 05:00Z in CST.
+  assert.equal(Zone.midnight(havana, "2026-11-02"), Date.UTC(2026, 10, 2, 5))
+  // So a tide at 04:30Z belongs to Nov 1, not Oct 31.
+  assert.ok(Date.UTC(2026, 10, 1, 4, 30) >= Zone.midnight(havana, "2026-11-01"))
+  assert.ok(Date.UTC(2026, 10, 1, 4, 30) < Zone.midnight(havana, "2026-11-02"))
+  assert.equal(Zone.midnight(havana, "2026-10-31"), Date.UTC(2026, 9, 31, 4))
+})
+
+test("a skipped midnight (Santiago, Sep 6 2026) starts the date at the transition", () => {
+  const santiago = tableZone("America/Santiago", -10800, Date.UTC(2026, 8, 20))
+  // Chile moved from UTC-4 to UTC-3 at 04:00Z, skipping 00:00-01:00 local.
+  assert.equal(Zone.midnight(santiago, "2026-09-06"), Date.UTC(2026, 8, 6, 4))
+  assert.equal(Zone.clock(santiago, Zone.midnight(santiago, "2026-09-06")), "01:00")
+  assert.equal(Zone.midnight(santiago, "2026-09-05"), Date.UTC(2026, 8, 5, 4))
+  assert.equal(Zone.midnight(santiago, "2026-09-07"), Date.UTC(2026, 8, 7, 3))
+  assert.equal((Zone.midnight(santiago, "2026-09-07") - Zone.midnight(santiago, "2026-09-06")) / H, 23)
+})
+
+test("an ordinary transition (New York, Nov 1, 02:00 local) still gives the 25-hour day", () => {
+  const zone = newYork()
+  assert.equal(Zone.midnight(zone, "2026-11-01"), Date.UTC(2026, 10, 1, 4))
+  assert.equal(Zone.midnight(zone, "2026-11-02"), Date.UTC(2026, 10, 2, 5))
+  assert.equal(Zone.midnight(zone, "2026-03-08"), Date.UTC(2026, 2, 8, 5))
+  assert.equal(Zone.midnight(zone, "2026-03-09"), Date.UTC(2026, 2, 9, 4))
+})
+
+test("a half-hour zone (Lord Howe) and a fixed quarter-hour zone get the right midnights", () => {
+  const lh = tableZone("Australia/Lord_Howe", 39600, NOW)
+  // Oct 4 2026: +10:30 until 02:00 local, then +11.
+  assert.equal(Zone.midnight(lh, "2026-10-04"), Date.UTC(2026, 9, 3, 13, 30))
+  assert.equal(Zone.midnight(lh, "2026-10-05"), Date.UTC(2026, 9, 4, 13))
+  assert.equal(Zone.clock(lh, Date.UTC(2026, 9, 3, 15, 29)), "01:59")
+  assert.equal(Zone.clock(lh, Date.UTC(2026, 9, 3, 15, 30)), "02:30")
+  const nepal = Zone.forReport({ timezone: "Asia/Kathmandu", utc_offset_seconds: 20700 }, table(), NOW)
+  assert.equal(Zone.midnight(nepal, "2026-10-05"), Date.UTC(2026, 9, 5) - 20700 * 1000)
+  assert.equal(Zone.midnight(20700, "2026-10-05"), Date.UTC(2026, 9, 5) - 20700 * 1000)
+})
+
+test("every date of every zone in the table begins at midnight or just after a skipped one", () => {
+  const zones = table()
+  let checked = 0
+  for (const name of Object.keys(zones)) {
+    const zone = zones[name]
+    for (const t of zone.transitions.slice(0, 6)) {
+      for (const delta of [-2, -1, 0, 1]) {
+        const date = new Date(t.utc + delta * 86400000).toISOString().slice(0, 10)
+        const start = Zone.midnight(zone, date)
+        const clock = Zone.clock(zone, start)
+        // Either exactly 00:00, or a skipped midnight so the first minute is later that same day.
+        assert.ok(clock === "00:00" || clock < "06:00", `${name} ${date} starts at ${clock}`)
+        // The date really is that date at its first instant, and not at the minute before.
+        const day = new Date(start + Zone.offsetAt(zone, start) * 1000).toISOString().slice(0, 10)
+        assert.equal(day, date, `${name} ${date}`)
+        const prev = new Date(start - 1 + Zone.offsetAt(zone, start - 1) * 1000).toISOString().slice(0, 10)
+        assert.ok(prev < date, `${name} ${date} minute before is ${prev}`)
+        checked++
+      }
+    }
+  }
+  assert.ok(checked > 1000)
+})
+
+// ---- N2: the table covers a range and expires -------------------------------
+
+const range = () => JSON.parse(readFileSync(TABLE_PATH, "utf8"))
+
+test("the table records the years it covers", () => {
+  const { from, to } = range()
+  assert.ok(Number.isInteger(from) && Number.isInteger(to) && to - from >= 6)
+})
+
+test("outside the covered years the zone gives the response's own offset, not the last table offset", () => {
+  const { from, to } = range()
+  const zone = tableZone("America/New_York", -14400, NOW)
+  assert.equal(Zone.offsetAt(zone, Date.UTC(to + 1, 6, 1)), -14400)
+  assert.equal(Zone.offsetAt(zone, Date.UTC(to + 5, 0, 15)), -14400)
+  assert.equal(Zone.offsetAt(zone, Date.UTC(from - 1, 0, 15)), -14400)
+  // Inside the range the table still decides.
+  assert.equal(Zone.offsetAt(zone, Date.UTC(from + 1, 0, 15)), -18000)
+  assert.equal(Zone.offsetAt(zone, Date.UTC(to, 6, 1)), -14400)
+  assert.equal(Zone.offsetAt(zone, Date.UTC(to, 0, 15)), -18000)
+})
+
+test("a date outside the range is a plain day in the response's offset", () => {
+  const { to } = range()
+  const zone = tableZone("America/New_York", -14400, NOW)
+  assert.equal(Zone.midnight(zone, `${to + 1}-07-01`), Date.UTC(to + 1, 6, 1, 4))
+})
+
+test("the table is not trusted within a year of its end, so it gets regenerated", () => {
+  const { to } = range()
+  const endsAt = Date.UTC(to + 1, 0, 1)
+  const key = now => Zone.forReport({ timezone: "America/New_York", utc_offset_seconds: -18000 }, table(), now)
+  const trusted = now => Zone.offsetAt(key(now), Date.UTC(to - 1, 6, 1)) === -14400
+  assert.equal(trusted(endsAt - 366 * 86400000 - 1), true)
+  assert.equal(trusted(endsAt - 365 * 86400000), false)
+  assert.equal(trusted(endsAt - 86400000), false)
+  assert.equal(trusted(endsAt + 86400000), false)
+  assert.equal(Zone.tableExpired(table(), endsAt - 366 * 86400000 - 1), false)
+  assert.equal(Zone.tableExpired(table(), endsAt - 365 * 86400000), true)
+})
+
+test("a table whose range is missing is not used at all", () => {
+  assert.deepEqual(Zone.parseTable(JSON.stringify({ zones: { "A/Good": [0, 100, 3600] } })), {})
+  assert.deepEqual(Zone.parseTable(JSON.stringify({ from: "x", to: 2030, zones: { "A/Good": [0, 100, 3600] } })), {})
+  assert.deepEqual(Zone.parseTable(JSON.stringify({ from: 2030, to: 2020, zones: { "A/Good": [0, 100, 3600] } })), {})
+})
+
 test("clock reads the wall time at that instant, across the change", () => {
   const zone = newYork()
   assert.equal(Zone.clock(zone, Date.UTC(2026, 10, 2, 4, 30)), "23:30")
@@ -103,7 +220,7 @@ test("a report carries its zone, and Zone.of finds it or falls back to the fixed
 
 test("a malformed table parses to nothing, and bad rows are dropped", () => {
   for (const bad of ["", "nope", "null", "[]", "{}", '{"zones":[]}', '{"zones":"x"}']) assert.deepEqual(Zone.parseTable(bad), {})
-  const dirty = JSON.stringify({ zones: {
+  const dirty = JSON.stringify({ from: 2026, to: 2032, zones: {
     "A/Good": [0, 100, 3600],
     "B/Odd": [0, 100],
     "C/String": [0, "100", 3600],

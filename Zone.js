@@ -7,17 +7,25 @@
 // A zone that is not in the table, or that the table contradicts, keeps the
 // response's single offset.
 //
-// A zone is { before, transitions: [{ utc, offset }], key }: `before` is the
-// offset ahead of the first transition, offsets are seconds east of UTC, `utc`
-// is epoch ms, and `key` names it for caches.
+// A zone is { before, transitions: [{ utc, offset }], key } plus, for a zone from
+// the table, `from` and `until` (the epoch ms the table covers) and `fallback`
+// (the report's own offset, used outside that range): `before` is the offset
+// ahead of the first transition, offsets are seconds east of UTC, `utc` is epoch
+// ms, and `key` names it for caches. The table expires: within a year of its end
+// it is not trusted (see tableExpired), so it gets regenerated first.
 .pragma library
 
 var DAY_MS = 86400000
+var YEAR_MS = 365 * DAY_MS
 var MAX_OFFSET = 86400
 var ZONE_NAME = /^[A-Za-z0-9_+\-]+(\/[A-Za-z0-9_+\-]+){0,2}$/
 
 function isObject(v) {
   return v !== null && typeof v === "object" && !Array.isArray(v)
+}
+
+function isInteger(v) {
+  return typeof v === "number" && isFinite(v) && Math.floor(v) === v
 }
 
 function validOffset(v) {
@@ -36,15 +44,38 @@ function normalize(zoneOrOffset) {
   return null
 }
 
+// The zone as consecutive [start, end) segments, each with one offset. Outside
+// the table's covered range there is one segment in the report's own offset.
+function segments(zone) {
+  if (zone.segs) return zone.segs
+  var hasRange = typeof zone.from === "number" && typeof zone.until === "number"
+  var fallback = hasRange && validOffset(zone.fallback) ? zone.fallback : null
+  var segs = []
+  var cursor = -Infinity
+  var current = zone.before
+  if (fallback !== null) {
+    segs.push({ start: -Infinity, end: zone.from, offset: fallback })
+    cursor = zone.from
+  }
+  for (var i = 0; i < zone.transitions.length; i++) {
+    segs.push({ start: cursor, end: zone.transitions[i].utc, offset: current })
+    cursor = zone.transitions[i].utc
+    current = zone.transitions[i].offset
+  }
+  segs.push({ start: cursor, end: fallback !== null ? zone.until : Infinity, offset: current })
+  if (fallback !== null) segs.push({ start: zone.until, end: Infinity, offset: fallback })
+  zone.segs = segs
+  return segs
+}
+
 function offsetAt(zoneOrOffset, ms) {
   var zone = normalize(zoneOrOffset)
   if (zone === null) return null
-  var offset = zone.before
-  for (var i = 0; i < zone.transitions.length; i++) {
-    if (zone.transitions[i].utc > ms) break
-    offset = zone.transitions[i].offset
+  var segs = segments(zone)
+  for (var i = 0; i < segs.length; i++) {
+    if (ms >= segs[i].start && ms < segs[i].end) return segs[i].offset
   }
-  return offset
+  return segs[segs.length - 1].offset
 }
 
 // tz-transitions.json text -> { "Zone/Name": { before, transitions, key } }.
@@ -58,33 +89,54 @@ function parseTable(text) {
     return out
   }
   if (!isObject(body) || !isObject(body.zones)) return out
+  var years = body.from
+  var last = body.to
+  if (!isInteger(years) || !isInteger(last) || years > last || years < 1900 || last > 3000) return out
   for (var name in body.zones) {
     var row = body.zones[name]
     if (!ZONE_NAME.test(name) || !Array.isArray(row) || row.length < 3 || row.length % 2 === 0) continue
     var ok = validOffset(row[0])
     var transitions = []
-    var last = -Infinity
+    var previous = -Infinity
     for (var i = 1; ok && i < row.length; i += 2) {
       var minute = row[i]
       var offset = row[i + 1]
-      if (typeof minute !== "number" || !isFinite(minute) || minute <= last || !validOffset(offset)) ok = false
+      if (typeof minute !== "number" || !isFinite(minute) || minute <= previous || !validOffset(offset)) ok = false
       else transitions.push({ utc: minute * 60000, offset: offset })
-      last = minute
+      previous = minute
     }
-    if (ok) out[name] = { before: row[0], transitions: transitions, key: name + "|" + row.length + "|" + row[1] }
+    if (ok) {
+      out[name] = {
+        before: row[0], transitions: transitions, key: name + "|" + row.length + "|" + row[1],
+        from: Date.UTC(years, 0, 1), until: Date.UTC(last + 1, 0, 1), fallback: null
+      }
+    }
   }
   return out
 }
 
+// Whether the table is within a year of its end, and so no longer trusted.
+function tableExpired(table, nowMs) {
+  if (!isObject(table)) return false
+  for (var name in table) return nowMs >= table[name].until - YEAR_MS
+  return false
+}
+
 // The zone for a forecast report. The table is used only when it knows the
-// report's `timezone` and agrees with the report's own offset at `nowMs`;
-// otherwise the report's single offset stands. Null if the report has none.
+// report's `timezone`, has not expired, and agrees with the report's own offset
+// at `nowMs`; the report's own offset covers any date outside the table's
+// years. Otherwise the report's single offset stands. Null if it has none.
 function forReport(report, table, nowMs) {
   if (!isObject(report) || !validOffset(report.utc_offset_seconds)) return null
   var plain = fixed(report.utc_offset_seconds)
   var name = report.timezone
   if (typeof name !== "string" || !ZONE_NAME.test(name) || !isObject(table) || !table.hasOwnProperty(name)) return plain
-  var zone = table[name]
+  if (tableExpired(table, nowMs)) return plain
+  var source = table[name]
+  var zone = {
+    before: source.before, transitions: source.transitions, from: source.from, until: source.until,
+    fallback: report.utc_offset_seconds, key: source.key + "|" + report.utc_offset_seconds
+  }
   return offsetAt(zone, nowMs) === report.utc_offset_seconds ? zone : plain
 }
 
@@ -131,13 +183,25 @@ function nextDate(dateString) {
     + "-" + (d.getUTCDate() < 10 ? "0" : "") + d.getUTCDate()
 }
 
-// The instant a local calendar date begins, as epoch ms; null for a bad date or zone.
+// The instant a local calendar date begins: the first instant whose local date
+// is that date, as epoch ms (null for a bad date or zone). Where midnight is
+// repeated (clocks go back at midnight) that is the earlier one; where it is
+// skipped (clocks go forward at midnight) it is the moment of the change.
 function midnight(zoneOrOffset, dateString) {
   var zone = normalize(zoneOrOffset)
-  var utc = parseDate(dateString)
-  if (zone === null || utc === null) return null
-  var guess = utc - offsetAt(zone, utc - zone.before * 1000) * 1000
-  return utc - offsetAt(zone, guess) * 1000
+  var wall = parseDate(dateString)
+  if (zone === null || wall === null) return null
+  var segs = segments(zone)
+  var best = null
+  for (var i = 0; i < segs.length; i++) {
+    var t = wall - segs[i].offset * 1000
+    if (t >= segs[i].start && t < segs[i].end && (best === null || t < best)) best = t
+  }
+  if (best !== null) return best
+  for (var j = 0; j < segs.length; j++) {
+    if (isFinite(segs[j].start) && segs[j].start + segs[j].offset * 1000 >= wall) return segs[j].start
+  }
+  return wall - segs[segs.length - 1].offset * 1000
 }
 
 // "HH:MM" on the wall clock at an instant, rounded to the minute.
