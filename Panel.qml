@@ -367,6 +367,19 @@ Panel {
     return isFinite(km) && km > 0 ? km : 40
   }
   readonly property string tideOverride: String(setting("tideStation", ""))
+  readonly property var tideRanges: [10, 20, 40, 80, 150]
+  property string tideStationHint: ""
+
+  // An override is saved only when it is blank (nearest station) or provider:id.
+  function saveTideStation(text) {
+    var value = String(text || "").replace(/^\s+|\s+$/g, "")
+    if (value !== "" && !Tides.parseOverride(value)) {
+      tideStationHint = "Use provider:id, for example noaa:9414290, or leave blank."
+      return
+    }
+    tideStationHint = ""
+    persistSetting("tideStation", value)
+  }
   property var tideStations: []
   property var tideCache: ({ version: 1, stations: {} })
   property bool tideCacheLoaded: false
@@ -3649,6 +3662,118 @@ KeyboardPanel {
                 foreground: root.bar.foreground
                 onToggled: root.persistSetting("orbitAutoSpin", !root.orbitAutoSpin)
               }
+            }
+
+            PanelSectionHeader {
+              text: "TIDES"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+            }
+
+            Item {
+              width: parent.width
+              height: Style.spacing.controlHeight
+
+              Text {
+                textFormat: Text.PlainText
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Show tides"
+                color: root.bar.foreground
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              ToggleSwitch {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.tidesEnabled
+                foreground: root.bar.foreground
+                onToggled: root.persistSetting("tidesEnabled", !root.tidesEnabled)
+              }
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: "High and low tides in the day card, from NOAA (US) or the Canadian Hydrographic Service, when a station is near. Nothing is requested otherwise."
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
+            }
+
+            Row {
+              visible: root.tidesEnabled
+              spacing: Style.space(6)
+
+              Repeater {
+                model: root.tideRanges
+
+                Rectangle {
+                  required property int modelData
+                  width: rangeLabel.implicitWidth + Style.space(16)
+                  height: Style.space(28)
+                  radius: Math.min(4, Style.cornerRadius)
+                  color: root.tideMaxKm === modelData
+                    ? Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.12)
+                    : "transparent"
+
+                  Text {
+                    textFormat: Text.PlainText
+                    id: rangeLabel
+                    anchors.centerIn: parent
+                    text: modelData + " km"
+                    color: root.tideMaxKm === modelData ? root.bar.foreground : root.dimText
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: root.tideMaxKm === modelData
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.persistSetting("tideMaxDistanceKm", modelData)
+                  }
+                }
+              }
+            }
+
+            Row {
+              visible: root.tidesEnabled
+              width: parent.width
+              spacing: Style.space(8)
+
+              TextField {
+                id: tideStationField
+                width: parent.width - saveTideBtn.implicitWidth - Style.space(8)
+                placeholderText: "Station override, e.g. noaa:9414290 (blank: nearest)"
+                text: root.tideOverride
+                foreground: root.bar.foreground
+                font.family: root.bar.fontFamily
+                Keys.onReturnPressed: root.saveTideStation(tideStationField.text)
+                Keys.onEnterPressed: root.saveTideStation(tideStationField.text)
+              }
+
+              Button {
+                id: saveTideBtn
+                text: "Save"
+                fontFamily: root.bar.fontFamily
+                foreground: root.bar.foreground
+                tooltipText: "Save this tide station"
+                onClicked: root.saveTideStation(tideStationField.text)
+              }
+            }
+
+            Text {
+              visible: root.tidesEnabled && root.tideStationHint !== ""
+              textFormat: Text.PlainText
+              width: parent.width
+              wrapMode: Text.WordWrap
+              text: root.tideStationHint
+              color: root.dimText
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
             }
 
             PanelSectionHeader {

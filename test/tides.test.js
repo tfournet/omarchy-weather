@@ -448,6 +448,12 @@ test("a malformed override is ignored and the nearest station is used", () => {
   }
 })
 
+test("the settings view accepts only blank or provider:id as an override", () => {
+  assert.deepEqual(Tides.parseOverride("noaa:9414290"), { provider: "noaa", id: "9414290" })
+  assert.deepEqual(Tides.parseOverride("  dfo:5cebf1de3d0f4a073c4bb943 "), { provider: "dfo", id: "5cebf1de3d0f4a073c4bb943" })
+  for (const bad of ["", "noaa", "noaa:", "x:1", "noaa:1:2", "noaa:a b", null, 5]) assert.equal(Tides.parseOverride(bad), null, String(bad))
+})
+
 test("bad coordinates or range give no station", () => {
   const stations = [SF]
   for (const [lat, lon, km] of [[NaN, 0, 40], [91, 0, 40], [0, 181, 40], ["37", -122, 40], [null, 0, 40], [37.8, -122.4, NaN],

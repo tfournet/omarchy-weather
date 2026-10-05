@@ -32,6 +32,24 @@ class TideWiringTests(unittest.TestCase):
         self.assertEqual(schema["tideStation"]["type"], "string")
         self.assertEqual(schema["tideStation"]["defaultValue"], "")
 
+    def test_the_panels_own_settings_view_has_the_three_controls(self):
+        settings = PANEL.split("id: settingsColumn")[1]
+        for contract in (
+            'text: "TIDES"',
+            'persistSetting("tidesEnabled", !root.tidesEnabled)',
+            'persistSetting("tideMaxDistanceKm", modelData)',
+            "model: root.tideRanges",
+            "id: tideStationField",
+            "root.saveTideStation(tideStationField.text)",
+        ):
+            self.assertIn(contract, settings)
+        # An override is saved only when it is blank or provider:id.
+        save = block(PANEL, "function saveTideStation(text)", "\n  }\n")
+        self.assertIn("Tides.parseOverride(", save)
+        self.assertIn('persistSetting("tideStation"', save)
+        # The section sits before the alerts section, with the other settings.
+        self.assertLess(settings.index('text: "TIDES"'), settings.index('text: "ALERTS"'))
+
     def test_panel_reads_the_settings(self):
         for contract in (
             'setting("tidesEnabled", true) !== false',
