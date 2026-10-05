@@ -487,6 +487,23 @@ test("bad coordinates give no station in any mode", () => {
   }
 })
 
+test("the cache never lets a nearby place borrow another's answer across the 100 km line", () => {
+  const inside = { lat: SF.lat + 0.899, lon: SF.lon }
+  const outside = { lat: SF.lat + 0.8994, lon: SF.lon }
+  const km = p => Tides.distanceKm(p.lat, p.lon, SF.lat, SF.lon)
+  assert.ok(km(inside) < 100 && km(outside) > 100, `${km(inside)} ${km(outside)}`)
+  // Both call orders, in fresh index arrays so no earlier entry is reused.
+  const a = [SF]
+  assert.ok(Tides.stationFor(a, inside.lat, inside.lon, "auto") !== null)
+  assert.equal(Tides.stationFor(a, outside.lat, outside.lon, "auto"), null)
+  const b = [SF, { provider: "noaa", id: "ZZZ", name: "far away", lat: -80, lon: 0 }]
+  assert.equal(Tides.stationFor(b, outside.lat, outside.lon, "auto"), null)
+  assert.ok(Tides.stationFor(b, inside.lat, inside.lon, "auto") !== null)
+  // The distance reported is that place's own.
+  assert.ok(Math.abs(Tides.stationFor(a, inside.lat, inside.lon, "auto").km - km(inside)) < 1e-9)
+  assert.ok(Math.abs(Tides.stationFor(a, outside.lat, outside.lon, "on").km - km(outside)) < 1e-9)
+})
+
 test("the choice is cached per place and mode, including no station", () => {
   const stations = [SF]
   const before = Tides.choiceCacheSize()

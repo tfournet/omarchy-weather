@@ -257,7 +257,9 @@ function stationFor(stations, lat, lon, mode) {
   if (!Array.isArray(stations) || !validPlace(lat, lon)) return null
   var m = normalizeMode(mode)
   if (m === "off") return null
-  var key = lat.toFixed(3) + "|" + lon.toFixed(3) + "|" + m + "|" + stations.length
+  // The exact coordinates, not rounded ones: two places a few metres apart can
+  // be on either side of the auto threshold and must not share an answer.
+  var key = lat + "|" + lon + "|" + m + "|" + stations.length
   if (choiceCache.hasOwnProperty(key)) return choiceCache[key]
   var found = nearestStation(stations, lat, lon, m === "on" ? Infinity : AUTO_MAX_KM)
   if (choiceCount >= CHOICE_LIMIT) {
