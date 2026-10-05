@@ -405,10 +405,14 @@ function dayTides(info, dateString, zoneOrOffset, useImperial, twelveHour) {
   var day = dayEvents(info.events, dateString, zoneOrOffset)
   var rows = []
   for (var i = 0; i < day.length; i++) {
+    var time = Model.formatClock(clock(day[i].time, zoneOrOffset), twelveHour, false)
+    var height = formatHeight(day[i].height, useImperial)
     rows.push({
       key: "tide" + i,
       label: day[i].type === "high" ? "High" : "Low",
-      value: Model.formatClock(clock(day[i].time, zoneOrOffset), twelveHour, false) + " · " + formatHeight(day[i].height, useImperial)
+      time: time,
+      height: height,
+      value: time + " · " + height
     })
   }
   if (rows.length === 0) rows.push({ key: "tides", label: "Tides", value: "—" })

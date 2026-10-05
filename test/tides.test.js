@@ -292,6 +292,19 @@ test("day rows are timed in the forecast zone, 12 or 24 hour, with the unit aske
   assert.deepEqual(imperial.map(r => r.value), ["7:39 AM · 3.8 ft", "3:20 PM · 14.6 ft", "9:26 PM · 9.9 ft"])
 })
 
+test("each tide row has its time and height as separate cells", () => {
+  const events = Tides.PROVIDERS.dfo.parse(fixture("dfo-07735-wlp-hilo.json"))
+  const info = { station: VANCOUVER, distanceKm: 3.2, events }
+  const metric = Tides.dayTides(info, "2026-10-05", PDT, false, false).rows
+  assert.deepEqual(metric.map(r => [r.label, r.time, r.height]),
+    [["Low", "07:39", "1.2 m"], ["High", "15:20", "4.5 m"], ["Low", "21:26", "3.0 m"]])
+  const long = Tides.dayTides({ station: SF, distanceKm: 1, events: [{ time: Date.UTC(2026, 9, 5, 19, 30), type: "high", height: 3.8 }] },
+    "2026-10-05", 0, true, true).rows[0]
+  assert.deepEqual([long.time, long.height], ["7:30 PM", "12.5 ft"])
+  const dash = Tides.dayTides({ station: SF, distanceKm: 1, events: [] }, "2026-10-05", PDT, false, false).rows[0]
+  assert.equal(dash.time, undefined)
+})
+
 test("a day with no events, or no events loaded, shows a dash", () => {
   const info = { station: SF, distanceKm: 1, events: [] }
   assert.deepEqual(Tides.dayTides(info, "2026-10-05", PDT, false, false).rows, [{ key: "tides", label: "Tides", value: "—" }])

@@ -160,18 +160,57 @@ Column {
     Text {
       textFormat: Text.PlainText
       width: parent.width
-      elide: Text.ElideRight
+      wrapMode: Text.WordWrap
       text: root.card && root.card.tides ? root.card.tides.station : ""
       color: root.dim
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
     }
 
-    DetailRows {
+    // One line per tide: type, time and height in their own columns, each wide
+    // enough for its text, so neither is ever cut off.
+    Column {
+      id: tideTable
       width: parent.width
-      entries: root.card && root.card.tides ? root.card.tides.rows : []
-      foreground: root.foreground
-      fontFamily: root.fontFamily
+      spacing: Style.space(4)
+
+      Repeater {
+        model: root.card && root.card.tides ? root.card.tides.rows : []
+
+        Row {
+          required property var modelData
+          width: tideTable.width
+          spacing: Style.space(8)
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width * 0.3
+            text: modelData.label
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width * 0.35 - parent.spacing
+            text: modelData.time !== undefined ? modelData.time : modelData.value
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width * 0.35 - parent.spacing
+            horizontalAlignment: Text.AlignRight
+            text: modelData.height !== undefined ? modelData.height : ""
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+      }
     }
 
     Text {

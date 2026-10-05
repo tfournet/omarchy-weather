@@ -91,6 +91,13 @@ class TideWiringTests(unittest.TestCase):
     def test_card_hands_the_tide_info_to_the_day_detail(self):
         self.assertIn("}, tideInfo)", PANEL)
 
+    def test_tide_rows_are_columns_that_never_elide(self):
+        table = block(DAY, "id: tideTable", "wrapMode: Text.WordWrap")
+        for contract in ("modelData.label", "modelData.time", "modelData.height", "root.card.tides.rows"):
+            self.assertIn(contract, table)
+        self.assertNotIn("DetailRows", table)
+        self.assertNotIn("elide", table)
+
     def test_day_card_draws_the_tides(self):
         for contract in ("root.card.tides", "root.card.tides.station", "root.card.tides.datum", "root.card.tides.credit"):
             self.assertIn(contract, DAY)
