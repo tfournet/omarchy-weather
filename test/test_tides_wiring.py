@@ -83,6 +83,11 @@ class TideWiringTests(unittest.TestCase):
         self.assertNotIn("mdapi", TIDES)
         self.assertIsNone(re.search(r'v1/stations["?]', TIDES))
 
+    def test_window_and_card_use_the_zoned_report(self):
+        self.assertIn("Tides.windowFor(zonedReport)", PANEL)
+        self.assertIn('Zone.localPath(Qt.resolvedUrl("tide-stations.json").toString())', PANEL)
+        self.assertNotIn("function localPath", TIDES)
+
     def test_card_hands_the_tide_info_to_the_day_detail(self):
         self.assertIn("}, tideInfo)", PANEL)
 

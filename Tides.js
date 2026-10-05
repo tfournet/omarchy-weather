@@ -349,43 +349,34 @@ function isCurrent(request, wantedKey) {
 
 // ---- Window and paths -----------------------------------------------------
 
-// UTC range covering every forecast day in the forecast's zone, with a day
-// before and after for the zone's offset from UTC.
+// UTC range covering every forecast day in the forecast's zone (each end at the
+// offset in force there), with a day before and after.
 function windowFor(report) {
   if (!isObject(report) || !isObject(report.daily) || !Array.isArray(report.daily.time) || report.daily.time.length < 1) return null
-  var offset = report.utc_offset_seconds
-  if (typeof offset !== "number" || !isFinite(offset)) return null
-  var first = Zone.midnight(offset, report.daily.time[0])
-  var last = Zone.midnight(offset, report.daily.time[report.daily.time.length - 1])
+  var zone = Zone.of(report)
+  if (zone === null) return null
+  var first = Zone.midnight(zone, report.daily.time[0])
+  var last = Zone.midnight(zone, report.daily.time[report.daily.time.length - 1])
   if (first === null || last === null) return null
   return { fromMs: first - DAY_MS, toMs: last + 2 * DAY_MS }
 }
 
-// A QML file URL as a filesystem path.
-function localPath(url) {
-  if (typeof url !== "string") return ""
-  if (url.indexOf("file://") !== 0) return url
-  try {
-    return decodeURIComponent(url.slice(7))
-  } catch (e) {
-    return ""
-  }
-}
-
 // ---- Display ----------------------------------------------------------------
 
-function clock(ms, offsetSec) {
-  return Zone.clock(offsetSec, ms)
+function clock(ms, zoneOrOffset) {
+  return Zone.clock(zoneOrOffset, ms)
 }
 
-// Events on a local calendar day, in the zone the offset describes.
-function dayEvents(events, dateString, offsetSec) {
+// Events on a local calendar day, in the zone given (a zone, or a fixed offset
+// in seconds). A day is 23 or 25 hours long where the clocks change.
+function dayEvents(events, dateString, zoneOrOffset) {
   if (!Array.isArray(events)) return []
-  var start = Zone.midnight(offsetSec, dateString)
-  if (start === null) return []
+  var start = Zone.midnight(zoneOrOffset, dateString)
+  var end = Zone.midnight(zoneOrOffset, Zone.nextDate(dateString))
+  if (start === null || end === null) return []
   var out = []
   for (var i = 0; i < events.length; i++) {
-    if (events[i].time >= start && events[i].time < start + DAY_MS) out.push(events[i])
+    if (events[i].time >= start && events[i].time < end) out.push(events[i])
   }
   return out.slice(0, MAX_PER_DAY)
 }
@@ -405,19 +396,19 @@ function formatDistance(km, useImperial) {
 
 // What the day card shows for tides, or null when there is no station to show.
 // info: { station, distanceKm, events }; events is null until they have loaded.
-function dayTides(info, dateString, offsetSec, useImperial, twelveHour) {
+function dayTides(info, dateString, zoneOrOffset, useImperial, twelveHour) {
   if (!isObject(info) || !isObject(info.station) || !PROVIDERS.hasOwnProperty(info.station.provider)) return null
-  if (typeof offsetSec !== "number" || !isFinite(offsetSec)) return null
+  if (Zone.normalize(zoneOrOffset) === null) return null
   if (Zone.midnight(0, dateString) === null) return null
 
   var provider = PROVIDERS[info.station.provider]
-  var day = dayEvents(info.events, dateString, offsetSec)
+  var day = dayEvents(info.events, dateString, zoneOrOffset)
   var rows = []
   for (var i = 0; i < day.length; i++) {
     rows.push({
       key: "tide" + i,
       label: day[i].type === "high" ? "High" : "Low",
-      value: Model.formatClock(clock(day[i].time, offsetSec), twelveHour, false) + " · " + formatHeight(day[i].height, useImperial)
+      value: Model.formatClock(clock(day[i].time, zoneOrOffset), twelveHour, false) + " · " + formatHeight(day[i].height, useImperial)
     })
   }
   if (rows.length === 0) rows.push({ key: "tides", label: "Tides", value: "—" })

@@ -388,7 +388,7 @@ Panel {
     if (!tidesEnabled || detailSelection.kind !== "day" || !tideChoice || !tideCacheLoaded) return
     if (tideProc.running || Date.now() < tideRetryAt) return
     if (!Tides.needsFetch(tideCache, tideKey, Date.now())) return
-    var win = Tides.windowFor(dailyForecastReport)
+    var win = Tides.windowFor(zonedReport)
     if (!win) return
     var argv = Tides.PROVIDERS[tideChoice.station.provider].request(tideChoice.station.id, win.fromMs, win.toMs)
     if (!argv) return
@@ -416,7 +416,7 @@ Panel {
 
   FileView {
     id: tideIndexFile
-    path: root.tidesEnabled ? Tides.localPath(Qt.resolvedUrl("tide-stations.json").toString()) : ""
+    path: root.tidesEnabled ? Zone.localPath(Qt.resolvedUrl("tide-stations.json").toString()) : ""
     printErrors: false
     onLoaded: root.tideStations = Tides.parseIndex(text())
     onLoadFailed: root.tideStations = []

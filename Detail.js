@@ -6,6 +6,7 @@
 .import "Model.js" as Model
 .import "Moon.js" as Moon
 .import "Tides.js" as Tides
+.import "Zone.js" as Zone
 
 var DASH = "—"
 var WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
@@ -209,6 +210,6 @@ function dayDetail(report, i, useImperial, twelveHour, formatDate, tideInfo) {
     ],
     rainStrip: rainStrip(report, date),
     moon: moonDetail(report, date, twelveHour),
-    tides: Tides.dayTides(tideInfo, date, report.utc_offset_seconds, useImperial, twelveHour)
+    tides: Tides.dayTides(tideInfo, date, Zone.of(report), useImperial, twelveHour)
   }
 }

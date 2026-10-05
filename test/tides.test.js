@@ -220,6 +220,55 @@ test("a UTC event just after midnight belongs to the previous local day west of 
   assert.equal(Tides.dayEvents(events, "2026-10-04", PDT)[0].time, Date.UTC(2026, 9, 5, 1, 32))
 })
 
+// New York across the end of daylight-saving time (Nov 1 2026, 06:00 UTC), on a
+// forecast fetched Oct 26 whose single offset is EDT (-4h).
+const Zone = loadLibrary("Zone.js")
+const NY_REPORT = {
+  latitude: 40.7, longitude: -74, timezone: "America/New_York", utc_offset_seconds: -14400,
+  daily: { time: ["2026-10-26", "2026-10-27", "2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04"] }
+}
+const nyZone = () => Zone.forReport(NY_REPORT, Zone.parseTable(readFileSync(join(__dirname, "..", "tz-transitions.json"), "utf8")),
+  Date.UTC(2026, 9, 26))
+const zonedNy = () => Zone.attach(NY_REPORT, nyZone())
+
+test("across the clock change, 04:30 UTC on Nov 2 is Nov 1 at 23:30 in New York", () => {
+  const events = [{ time: Date.UTC(2026, 10, 2, 4, 30), type: "high", height: 1 }]
+  const day1 = Tides.dayEvents(events, "2026-11-01", nyZone())
+  assert.equal(day1.length, 1)
+  assert.equal(Tides.clock(day1[0].time, nyZone()), "23:30")
+  assert.equal(Tides.dayEvents(events, "2026-11-02", nyZone()).length, 0)
+  // The single fetch-time offset gets both wrong, which is the bug this guards.
+  assert.equal(Tides.dayEvents(events, "2026-11-02", -14400).length, 1)
+})
+
+test("the 25-hour day holds events from 00:00 EDT to 23:59 EST and no more", () => {
+  const events = [
+    { time: Date.UTC(2026, 10, 1, 3, 59), type: "low", height: 1 },
+    { time: Date.UTC(2026, 10, 1, 4, 0), type: "high", height: 1 },
+    { time: Date.UTC(2026, 10, 1, 6, 30), type: "low", height: 1 },
+    { time: Date.UTC(2026, 10, 2, 4, 59), type: "high", height: 1 },
+    { time: Date.UTC(2026, 10, 2, 5, 0), type: "low", height: 1 }
+  ]
+  assert.deepEqual(Tides.dayEvents(events, "2026-11-01", nyZone()).map(e => e.time),
+    [events[1].time, events[2].time, events[3].time])
+  assert.deepEqual(Tides.dayEvents(events, "2026-11-02", nyZone()).map(e => e.time), [events[4].time])
+})
+
+test("the day card for New York shows the late event on Nov 1 at 23:30, not Nov 2 at 00:30", () => {
+  const events = [{ time: Date.UTC(2026, 10, 2, 4, 30), type: "high", height: 1.2 }]
+  const info = { station: SF, distanceKm: 3, events }
+  const nov1 = Detail.dayDetail(zonedNy(), 2, false, false, undefined, info)
+  assert.deepEqual(nov1.tides.rows.map(r => r.value), ["23:30 · 1.2 m"])
+  const nov2 = Detail.dayDetail(zonedNy(), 3, false, false, undefined, info)
+  assert.deepEqual(nov2.tides.rows.map(r => r.value), ["—"])
+})
+
+test("the request window follows each end's own offset", () => {
+  const win = Tides.windowFor(zonedNy())
+  assert.equal(win.fromMs, Date.UTC(2026, 9, 26, 4) - 24 * HOUR)
+  assert.equal(win.toMs, Date.UTC(2026, 10, 4, 5) + 48 * HOUR)
+})
+
 test("east of Greenwich the same UTC event lands on the next local day", () => {
   const events = [{ time: Date.UTC(2026, 9, 4, 22, 30), type: "high", height: 1 }]
   assert.equal(Tides.dayEvents(events, "2026-10-05", 11 * 3600).length, 1)
@@ -514,14 +563,6 @@ test("no usable forecast days or offset means no window", () => {
   }
 })
 
-test("a file URL becomes a path", () => {
-  assert.equal(Tides.localPath("file:///home/tim/.config/omarchy/plugins/x/tide-stations.json"),
-    "/home/tim/.config/omarchy/plugins/x/tide-stations.json")
-  assert.equal(Tides.localPath("file:///a%20b/c.json"), "/a b/c.json")
-  assert.equal(Tides.localPath("/already/a/path.json"), "/already/a/path.json")
-  assert.equal(Tides.localPath(""), "")
-  assert.equal(Tides.localPath(null), "")
-})
 
 // ---- the card -------------------------------------------------------------
 
