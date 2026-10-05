@@ -336,7 +336,8 @@ Panel {
   readonly property var detailCard: detailSelection.kind === "hour"
     ? Detail.hourDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour)
     : (detailSelection.kind === "day"
-      ? Detail.dayDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour)
+      ? Detail.dayDetail(dailyForecastReport, detailSelection.index, useImperial, use12Hour,
+        function(d) { return Qt.formatDate(d, "ddd MMM d") })
       : null)
 
   function toggleDetail(kind, reportIndex) {

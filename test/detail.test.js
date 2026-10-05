@@ -132,7 +132,7 @@ test("hour card for a bad index or report is null, not a crash", () => {
 
 test("day card shows every field in metric", () => {
   const card = Detail.dayDetail(report(), 0, false, false)
-  assert.equal(card.title, "Mon 2026-10-05")
+  assert.equal(card.title, "Mon Oct 5")
   assert.equal(row(card, "highLow"), "22° / 12°")
   assert.equal(row(card, "feelsRange"), "23° / 10°")
   assert.equal(row(card, "rainChance"), "70%")
@@ -167,6 +167,48 @@ test("day card rain strip is that day's 24 hours, with unknown hours kept unknow
   assert.equal(strip[5].mm, null)
   assert.equal(strip[15].mm, 0.3)
   assert.equal(Detail.dayDetail(r, 1, false, false).rainStrip.length, 24)
+})
+
+test("a flood of samples for one hour makes exactly 24 slots, the first valid sample wins", () => {
+  const r = report()
+  const n = 40000
+  r.hourly.time = r.hourly.time.concat(Array(n).fill("2026-10-05T00:00"))
+  r.hourly.precipitation = r.hourly.precipitation.concat(Array(n).fill(9))
+  const strip = Detail.dayDetail(r, 0, false, false).rainStrip
+  assert.equal(strip.length, 24)
+  assert.deepEqual(strip.map(s => s.hour), Array.from({ length: 24 }, (_, h) => h))
+  assert.equal(strip[0].mm, 0)
+})
+
+test("a first sample that is invalid does not block a later valid one for that hour", () => {
+  const r = report()
+  r.hourly.time.push("2026-10-05T03:00")
+  r.hourly.precipitation[3] = "x"
+  r.hourly.precipitation.push(1.5)
+  assert.equal(Detail.dayDetail(r, 0, false, false).rainStrip[3].mm, 1.5)
+})
+
+test("an hour with no sample is an empty slot, and bad hours are ignored", () => {
+  const r = report()
+  r.hourly.time[7] = "2026-10-05T25:00"
+  r.hourly.time[8] = "2026-10-05Tab:00"
+  const strip = Detail.dayDetail(r, 0, false, false).rainStrip
+  assert.equal(strip.length, 24)
+  assert.equal(strip[7].mm, null)
+  assert.equal(strip[8].mm, null)
+  assert.equal(strip[9].mm, 0)
+})
+
+test("day card heading is the weekday and a short date, or the caller's locale format", () => {
+  assert.equal(Detail.dayDetail(report(), 0, false, false).title, "Mon Oct 5")
+  assert.equal(Detail.dayDetail(report(), 1, false, false).title, "Tue Oct 6")
+  const seen = []
+  const card = Detail.dayDetail(report(), 0, false, false, d => { seen.push(d); return "lun. 5 oct." })
+  assert.equal(card.title, "lun. 5 oct.")
+  assert.equal(seen[0].getFullYear(), 2026)
+  assert.equal(seen[0].getMonth(), 9)
+  assert.equal(seen[0].getDate(), 5)
+  assert.equal(Detail.dayDetail(report(), 0, false, false, () => 5).title, "Mon Oct 5")
 })
 
 test("day card with no hourly data has an empty strip", () => {

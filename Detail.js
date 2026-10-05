@@ -132,21 +132,41 @@ function hourDetail(report, i, useImperial, twelveHour) {
   }
 }
 
-// The day's 24 hourly rain amounts, in order. An hour with no usable amount
-// stays null so the strip can leave a gap rather than draw a dry hour.
+// The day's rain amounts as exactly 24 slots, hour 0 to 23. A slot takes the
+// first usable sample for its hour; repeats are ignored, so a response with
+// thousands of samples for one hour still draws 24 bars. An hour with no usable
+// sample stays null so the strip can leave a gap rather than draw a dry hour.
 function rainStrip(report, date) {
   var h = report && report.hourly
   if (!h || !Array.isArray(h.time)) return []
   var out = []
+  for (var hour = 0; hour < 24; hour++) out.push({ hour: hour, mm: null })
   for (var i = 0; i < h.time.length; i++) {
     var t = h.time[i]
     if (typeof t !== "string" || t.slice(0, 10) !== date) continue
-    out.push({ hour: parseInt(t.slice(11, 13), 10), mm: Model.amountMm(h.precipitation, i) })
+    var hr = /^\d{2}:00/.test(t.slice(11)) ? parseInt(t.slice(11, 13), 10) : -1
+    if (hr < 0 || hr > 23 || out[hr].mm !== null) continue
+    out[hr].mm = Model.amountMm(h.precipitation, i)
   }
   return out
 }
 
-function dayDetail(report, i, useImperial, twelveHour) {
+var MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+// "Mon Oct 5". A caller can supply a formatter for a Date at local noon of that
+// day (the panel passes Qt's locale-aware one); a result that is not a
+// non-empty string is ignored.
+function dayTitle(date, formatDate) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(date)
+  if (!m) return date
+  if (typeof formatDate === "function") {
+    var text = formatDate(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12))
+    if (typeof text === "string" && text !== "") return text
+  }
+  return (weekday(date) + " " + MONTHS[Number(m[2]) - 1] + " " + Number(m[3])).replace(/^\s+/, "")
+}
+
+function dayDetail(report, i, useImperial, twelveHour, formatDate) {
   var d = report && report.daily
   if (!d || !validIndex(d.time, i)) return null
 
@@ -155,7 +175,7 @@ function dayDetail(report, i, useImperial, twelveHour) {
   var range = function(hi, lo) { return temp(hi, useImperial) + " / " + temp(lo, useImperial) }
 
   return {
-    title: (weekday(date) + " " + date).replace(/^\s+/, ""),
+    title: dayTitle(date, formatDate),
     rows: [
       row("highLow", "High / low", range(num(d.temperature_2m_max, i, -100, 100), num(d.temperature_2m_min, i, -100, 100))),
       row("feelsRange", "Feels like", range(num(d.apparent_temperature_max, i, -100, 100), num(d.apparent_temperature_min, i, -100, 100))),

@@ -47,6 +47,9 @@ class DetailCardTests(unittest.TestCase):
         self.assertIn("onDailyForecastReportChanged: if (!dailyForecastReport) closeDetail()", PANEL)
         self.assertIn("closeDetail()", PANEL.split("function close() {")[1].split("\n  }\n")[0])
 
+    def test_day_heading_uses_the_panels_locale_date_format(self):
+        self.assertIn('Qt.formatDate(d, "ddd MMM d")', PANEL)
+
     def test_components_exist_and_leave_slots(self):
         day = (PLUGIN / "DayDetail.qml").read_text(encoding="utf-8")
         self.assertIn("SLOT: moon", day)
