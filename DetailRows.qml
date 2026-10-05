@@ -2,11 +2,14 @@ import QtQuick
 import qs.Commons
 import "Palette.js" as Palette
 
-// Label / value pairs for a detail card, in two columns. The entries come
-// pre-formatted from Detail.js; this only draws them. An entry with `segments`
-// draws each piece in the colour of its tone, taken from `roles`; the rest of
-// the text stays the foreground.
-Grid {
+// Label / value lines for a detail card. The entries come pre-formatted from
+// Detail.js; this only draws them. An entry with `segments` draws each piece in
+// the colour of its tone, taken from `roles`; the rest stays the foreground.
+//
+// Each line is the full card width. The value sits at the right of its label
+// when it fits there; when it would not, it moves to its own line under the
+// label and wraps across the full width. It never overlaps or is cut short.
+Column {
   id: grid
 
   property var entries: []
@@ -15,56 +18,76 @@ Grid {
   property string fontFamily: Style.font.family
   readonly property color dim: Util.alpha(foreground, 0.8)
 
-  columns: 2
-  columnSpacing: Style.space(16)
-  rowSpacing: Style.space(6)
+  spacing: Style.space(6)
 
   function segmentColor(tone) {
     var hex = Palette.toneColor(roles, tone)
     return hex !== "" ? hex : foreground
   }
 
+  // One piece of a value.
+  component Segment: Text {
+    required property var modelData
+    textFormat: Text.PlainText
+    text: modelData.text
+    color: grid.segmentColor(modelData.tone)
+    font.family: grid.fontFamily
+    font.pixelSize: Style.font.bodySmall
+  }
+
   Repeater {
     model: grid.entries
 
-    Row {
-      id: entryRow
+    Item {
+      id: entry
       required property var modelData
-      width: (grid.width - grid.columnSpacing) / 2
-      spacing: Style.space(6)
+      readonly property var parts: modelData.segments && modelData.segments.length > 0
+        ? modelData.segments
+        : [{ text: modelData.value, tone: "" }]
+      readonly property bool stacked: measure.implicitWidth > width - label.implicitWidth - Style.space(12)
+
+      width: grid.width
+      implicitHeight: stacked
+        ? label.implicitHeight + Style.space(2) + wrapped.implicitHeight
+        : Math.max(label.implicitHeight, measure.implicitHeight)
+      height: implicitHeight
 
       Text {
+        id: label
         textFormat: Text.PlainText
-        width: parent.width * 0.48
-        elide: Text.ElideRight
-        text: entryRow.modelData.label
+        text: entry.modelData.label
         color: grid.dim
         font.family: grid.fontFamily
         font.pixelSize: Style.font.caption
       }
 
-      Item {
-        width: parent.width * 0.52 - parent.spacing
-        height: valueRow.implicitHeight
+      // The value's natural width, to decide which layout it gets.
+      Row {
+        id: measure
+        visible: false
+        Repeater {
+          model: entry.parts
+          Segment {}
+        }
+      }
 
-        Row {
-          id: valueRow
-          anchors.right: parent.right
+      Row {
+        visible: !entry.stacked
+        anchors.right: parent.right
+        Repeater {
+          model: entry.parts
+          Segment {}
+        }
+      }
 
-          Repeater {
-            model: entryRow.modelData.segments && entryRow.modelData.segments.length > 0
-              ? entryRow.modelData.segments
-              : [{ text: entryRow.modelData.value, tone: "" }]
-
-            Text {
-              required property var modelData
-              textFormat: Text.PlainText
-              text: modelData.text
-              color: grid.segmentColor(modelData.tone)
-              font.family: grid.fontFamily
-              font.pixelSize: Style.font.bodySmall
-            }
-          }
+      Flow {
+        id: wrapped
+        visible: entry.stacked
+        y: label.implicitHeight + Style.space(2)
+        width: parent.width
+        Repeater {
+          model: entry.parts
+          Segment {}
         }
       }
     }
